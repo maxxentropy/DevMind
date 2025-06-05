@@ -1,8 +1,7 @@
-// src/DevMind.Infrastructure/Services/AgentOrchestrationService.cs (Updated)
-
 using DevMind.Core.Application.Interfaces;
 using DevMind.Core.Domain.Entities;
 using DevMind.Core.Domain.ValueObjects;
+using DevMind.Core.Extensions;
 using DevMind.Infrastructure.LlmProviders;
 using Microsoft.Extensions.Logging;
 
@@ -89,11 +88,11 @@ public class AgentOrchestrationService : IAgentOrchestrationService
                 return CreateErrorResponse(executionResult.Error, "Failed to execute plan");
             }
 
-            var toolResults = executionResult.Value;
-            _logger.LogDebug("Executed plan with {ResultCount} tool results", toolResults.Count());
+            var toolExecutions = executionResult.Value;
+            _logger.LogDebug("Executed plan with {ResultCount} tool results", toolExecutions.Count());
 
             // Step 5: Synthesize final response
-            var responseResult = await SynthesizeResponse(intent, plan, toolResults, cancellationToken);
+            var responseResult = await SynthesizeResponse(intent, plan, toolExecutions, cancellationToken);
             if (responseResult.IsFailure)
             {
                 return CreateErrorResponse(responseResult.Error, "Failed to synthesize response");
@@ -255,7 +254,7 @@ public class AgentOrchestrationService : IAgentOrchestrationService
     /// <param name="plan">Execution plan to run</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing tool execution results</returns>
-    private async Task<Result<IEnumerable<ToolResult>>> ExecutePlan(
+    private async Task<Result<IEnumerable<ToolExecution>>> ExecutePlan(
         ExecutionPlan plan,
         CancellationToken cancellationToken)
     {
@@ -263,21 +262,21 @@ public class AgentOrchestrationService : IAgentOrchestrationService
         {
             plan.StartExecution();
 
-            var results = new List<ToolResult>();
+            var results = new List<Result<ToolExecution>>();
 
             foreach (var step in plan.Steps)
             {
                 _logger.LogDebug("Executing tool: {ToolName}", step.ToolName);
 
-                var toolResult = await _mcpClientService.ExecuteToolAsync(step, cancellationToken);
-                results.Add(toolResult);
+                var toolExecutionResult = await _mcpClientService.ExecuteToolAsync(step, cancellationToken);
+                results.Add(toolExecutionResult);
 
-                if (!toolResult.Success)
+                if (toolExecutionResult.IsFailure)
                 {
                     _logger.LogWarning("Tool execution failed: {ToolName} - {Error}",
-                        step.ToolName, toolResult.Error);
+                        step.ToolName, toolExecutionResult.Error.Message);
 
-                    plan.FailExecution($"Tool {step.ToolName} failed: {toolResult.Error}");
+                    plan.FailExecution($"Tool {step.ToolName} failed: {toolExecutionResult.Error.Message}");
                     break;
                 }
             }
@@ -287,14 +286,17 @@ public class AgentOrchestrationService : IAgentOrchestrationService
                 plan.CompleteExecution();
             }
 
-            return Result<IEnumerable<ToolResult>>.Success(results);
+            // Extract successful executions for return
+            var successfulExecutions = results.GetSuccessful();
+
+            return Result<IEnumerable<ToolExecution>>.Success(successfulExecutions);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing plan");
             plan.FailExecution($"Execution error: {ex.Message}");
 
-            return Result<IEnumerable<ToolResult>>.Failure(
+            return Result<IEnumerable<ToolExecution>>.Failure(
                 LlmErrorCodes.ServiceUnavailable,
                 "Failed to execute plan due to tool service error");
         }
@@ -305,15 +307,19 @@ public class AgentOrchestrationService : IAgentOrchestrationService
     /// </summary>
     /// <param name="intent">Original user intent</param>
     /// <param name="plan">Execution plan</param>
-    /// <param name="toolResults">Results from tool execution</param>
+    /// <param name="toolExecutions">Results from tool execution</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing the synthesized response</returns>
     private async Task<Result<string>> SynthesizeResponse(
         UserIntent intent,
         ExecutionPlan plan,
-        IEnumerable<ToolResult> toolResults,
+        IEnumerable<ToolExecution> toolExecutions,
         CancellationToken cancellationToken)
     {
+        // Convert ToolExecutions to ToolResults for backward compatibility with LLM service
+        var toolResults = toolExecutions.Select(execution =>
+            ToolResult.Succeeded(execution.ToolCall, execution.GetResult<object>(), execution.Metadata));
+
         var result = await _llmService.SynthesizeResponseAsync(intent, plan, toolResults, cancellationToken);
 
         return result.OnFailure(error =>

@@ -8,37 +8,121 @@ using System.Text.Json;
 
 namespace DevMind.Infrastructure.LlmProviders;
 
-public class AnthropicService : ILlmService
+/// <summary>
+/// Anthropic Claude implementation of the LLM service using the Response pattern
+/// </summary>
+public class AnthropicService : BaseLlmService
 {
-    // TODO: Implement class members
-    
-    public AnthropicService()
+    #region Private Fields
+
+    private readonly HttpClient _httpClient;
+    private readonly IOptions<AnthropicOptions> _options;
+
+    #endregion
+
+    #region Properties
+
+    protected override string ProviderName => "anthropic";
+
+    #endregion
+
+    #region Constructor
+
+    public AnthropicService(
+        HttpClient httpClient,
+        IOptions<AnthropicOptions> options,
+        ILogger<AnthropicService> logger,
+        LlmErrorHandler errorHandler)
+        : base(logger, errorHandler)
     {
-        // TODO: Constructor implementation
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
-    public Task<Result<UserIntent>> AnalyzeIntentAsync(UserRequest request, CancellationToken cancellationToken = default)
+    #endregion
+
+    #region Protected Implementation Methods
+
+    protected override async Task<UserIntent> AnalyzeIntentInternalAsync(UserRequest request, CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        var configValidation = ValidateConfiguration();
+        if (configValidation.IsFailure)
+        {
+            throw new InvalidOperationException($"Anthropic configuration is invalid: {configValidation.Error.Message}");
+        }
+
+        // Implement Anthropic-specific intent analysis
+        // This would make actual API calls to Anthropic Claude
+
+        // Placeholder implementation
+        await Task.Delay(120, cancellationToken); // Simulate API call
+
+        return UserIntent.Create(request.Content, IntentType.AnalyzeCode);
     }
 
-    public Task<Result<ExecutionPlan>> CreateExecutionPlanAsync(UserIntent intent, IEnumerable<ToolDefinition> availableTools, CancellationToken cancellationToken = default)
+    protected override async Task<ExecutionPlan> CreateExecutionPlanInternalAsync(
+        UserIntent intent,
+        IEnumerable<ToolDefinition> availableTools,
+        CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        // Implement Anthropic-specific execution plan creation
+        await Task.Delay(250, cancellationToken); // Simulate API call
+
+        var plan = ExecutionPlan.Create(intent);
+        var toolCall = ToolCall.Create("anthropic_tool", new Dictionary<string, object> { ["input"] = intent.OriginalRequest });
+        plan.AddStep(toolCall);
+
+        return plan;
     }
 
-    public Task<Result<string>> GenerateResponseAsync(string prompt, LlmOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<string> SynthesizeResponseInternalAsync(
+        UserIntent intent,
+        ExecutionPlan plan,
+        IEnumerable<ToolExecution> results,
+        CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        // Implement Anthropic-specific response synthesis
+        await Task.Delay(350, cancellationToken); // Simulate API call
+
+        return $"Claude has analyzed your request '{intent.OriginalRequest}' and executed {results.Count()} tool(s) to provide this response.";
     }
 
-    public Task<Result<bool>> HealthCheckAsync(CancellationToken cancellationToken = default)
+    protected override async Task<string> GenerateResponseInternalAsync(
+        string prompt,
+        LlmOptions options,
+        CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        // Implement Anthropic-specific response generation
+        // This would make actual API calls to Anthropic's messages endpoint
+
+        await Task.Delay(450, cancellationToken); // Simulate API call
+
+        return $"Claude response for prompt: {prompt.Substring(0, Math.Min(50, prompt.Length))}...";
     }
 
-    public Task<Result<string>> SynthesizeResponseAsync(UserIntent intent, ExecutionPlan plan, IEnumerable<ToolResult> results, CancellationToken cancellationToken = default)
+    protected override async Task<bool> HealthCheckInternalAsync(CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        try
+        {
+            // Implement actual health check - perhaps a simple API call
+            await Task.Delay(60, cancellationToken); // Simulate health check
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
+
+    protected override Result ValidateConfiguration()
+    {
+        var options = _options.Value;
+        var errors = options.Validate();
+
+        return errors.Any()
+            ? Result.Failure(LlmErrorCodes.Configuration, $"Anthropic configuration errors: {string.Join(", ", errors)}")
+            : Result.Success();
+    }
+
+    #endregion
 }

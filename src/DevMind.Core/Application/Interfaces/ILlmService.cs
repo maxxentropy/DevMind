@@ -36,7 +36,7 @@ public interface ILlmService
     /// <param name="results">Results from tool executions</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing the synthesized response or error information</returns>
-    Task<Result<string>> SynthesizeResponseAsync(UserIntent intent, ExecutionPlan plan, IEnumerable<ToolResult> results, CancellationToken cancellationToken = default);
+    Task<Result<string>> SynthesizeResponseAsync(UserIntent intent, ExecutionPlan plan, IEnumerable<ToolExecution> results, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Generates a response for a given prompt using the LLM
