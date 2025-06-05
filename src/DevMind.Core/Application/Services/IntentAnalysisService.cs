@@ -13,4 +13,14 @@ public class IntentAnalysisService : IIntentAnalysisService
     {
         // TODO: Constructor implementation
     }
+
+    public Task<UserIntent> AnalyzeIntentAsync(UserRequest request, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<ConfidenceLevel> ValidateIntentAsync(UserIntent intent, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
 }

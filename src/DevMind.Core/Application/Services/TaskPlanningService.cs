@@ -13,4 +13,19 @@ public class TaskPlanningService : IPlanningService
     {
         // TODO: Constructor implementation
     }
+
+    public Task<ExecutionPlan> CreateExecutionPlanAsync(UserIntent intent, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<ExecutionPlan> OptimizePlanAsync(ExecutionPlan plan, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<bool> ValidatePlanAsync(ExecutionPlan plan, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
 }

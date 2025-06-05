@@ -13,4 +13,19 @@ public class EnhancedAgentOrchestrationService : IAgentOrchestrationService
     {
         // TODO: Constructor implementation
     }
+
+    public Task<Result<AgentResponse>> ContinueConversationAsync(UserRequest request, Guid previousSessionId, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<Result<IEnumerable<AgentSession>>> GetSessionHistoryAsync(int limit = 10, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<Result<AgentResponse>> ProcessUserRequestAsync(UserRequest request, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
 }

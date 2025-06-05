@@ -46,6 +46,12 @@ public static class LlmServiceExtensions
         // Add performance monitoring and metrics
         services.AddLlmTelemetry();
 
+        // Add error handling
+        services.AddLlmErrorHandling();
+
+        // Add configuration validation
+        services.AddLlmConfigurationValidation();
+
         return services;
     }
 
@@ -175,6 +181,32 @@ public static class LlmServiceExtensions
     }
 
     /// <summary>
+    /// Adds LLM configuration validation as a hosted service
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <returns>The service collection for chaining</returns>
+    public static IServiceCollection AddLlmConfigurationValidation(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddHostedService<LlmConfigurationValidator>();
+        return services;
+    }
+
+    /// <summary>
+    /// Adds LLM error handling services
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <returns>The service collection for chaining</returns>
+    public static IServiceCollection AddLlmErrorHandling(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<LlmErrorHandler>();
+        return services;
+    }
+
+    /// <summary>
     /// Registers the main LLM service with provider selection logic
     /// </summary>
     /// <param name="services">The service collection</param>
@@ -228,11 +260,11 @@ public static class LlmServiceExtensions
     /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddLlmHealthChecks(this IServiceCollection services)
     {
-        services.AddHealthChecks()
-            .AddCheck<LlmProviderHealthCheck>("llm-provider", timeout: TimeSpan.FromSeconds(30))
-            .AddCheck<OpenAiHealthCheck>("openai", timeout: TimeSpan.FromSeconds(30))
-            .AddCheck<AnthropicHealthCheck>("anthropic", timeout: TimeSpan.FromSeconds(30))
-            .AddCheck<OllamaHealthCheck>("ollama", timeout: TimeSpan.FromSeconds(30));
+        //services.AddHealthChecks()
+        //    .AddCheck<LlmProviderHealthCheck>("llm-provider", timeout: TimeSpan.FromSeconds(30))
+        //    .AddCheck<OpenAiHealthCheck>("openai", timeout: TimeSpan.FromSeconds(30))
+        //    .AddCheck<AnthropicHealthCheck>("anthropic", timeout: TimeSpan.FromSeconds(30))
+        //    .AddCheck<OllamaHealthCheck>("ollama", timeout: TimeSpan.FromSeconds(30));
 
         return services;
     }
@@ -394,7 +426,7 @@ public static class LlmServiceExtensions
                 };
 
                 _logger.LogDebug("Created LLM provider: {ProviderName}", providerName);
-                return provider;
+                return provider!;
             }
             catch (Exception ex)
             {
