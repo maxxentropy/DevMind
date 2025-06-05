@@ -10,8 +10,9 @@ using System.Diagnostics;
 namespace DevMind.Infrastructure.McpClients;
 
 /// <summary>
-/// HTTP implementation of the MCP client service using JSON-RPC 2.0 over HTTP
-/// Implements the Model Context Protocol standard for communication with MCP servers
+/// HTTP implementation of the MCP client service using JSON-RPC 2.0 over HTTP.
+/// Implements the Model Context Protocol standard for communication with MCP servers.
+/// Provides comprehensive error handling, retry logic, and protocol compliance.
 /// </summary>
 public class HttpMcpClient : IMcpClientService
 {
@@ -28,6 +29,14 @@ public class HttpMcpClient : IMcpClientService
 
     #region Constructor
 
+    /// <summary>
+    /// Initializes a new instance of the HttpMcpClient with dependency injection.
+    /// Configures JSON serialization options and HTTP client settings.
+    /// </summary>
+    /// <param name="httpClient">HTTP client for MCP communication</param>
+    /// <param name="options">MCP client configuration options</param>
+    /// <param name="logger">Logger for diagnostic information</param>
+    /// <exception cref="ArgumentNullException">Thrown when required dependencies are null</exception>
     public HttpMcpClient(
         HttpClient httpClient,
         IOptions<McpClientOptions> options,
@@ -51,6 +60,12 @@ public class HttpMcpClient : IMcpClientService
 
     #region IMcpClientService Implementation
 
+    /// <summary>
+    /// Retrieves all available tools from the MCP server using the tools/list method.
+    /// Automatically initializes the MCP connection if not already established.
+    /// </summary>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>Result containing enumerable of available tool definitions or error information</returns>
     public async Task<Result<IEnumerable<ToolDefinition>>> GetAvailableToolsAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -91,6 +106,14 @@ public class HttpMcpClient : IMcpClientService
         }
     }
 
+    /// <summary>
+    /// Executes a specific tool on the MCP server using the tools/call method.
+    /// Measures execution time and provides comprehensive error handling.
+    /// </summary>
+    /// <param name="toolCall">Tool call specification with name and parameters</param>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>Result containing tool execution details or error information</returns>
+    /// <exception cref="ArgumentNullException">Thrown when toolCall is null</exception>
     public async Task<Result<ToolExecution>> ExecuteToolAsync(ToolCall toolCall, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(toolCall);
@@ -160,6 +183,12 @@ public class HttpMcpClient : IMcpClientService
         }
     }
 
+    /// <summary>
+    /// Performs health check on the MCP server by calling the dedicated health endpoint.
+    /// Health check failures return false rather than throwing exceptions for operational resilience.
+    /// </summary>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>Result indicating server health status</returns>
     public async Task<Result<bool>> HealthCheckAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -186,6 +215,14 @@ public class HttpMcpClient : IMcpClientService
         }
     }
 
+    /// <summary>
+    /// Retrieves definition for a specific tool by name.
+    /// Uses the tools/list method and filters results since MCP doesn't provide individual tool endpoints.
+    /// </summary>
+    /// <param name="toolName">Name of the tool to retrieve definition for</param>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>Result containing tool definition or error information</returns>
+    /// <exception cref="ArgumentException">Thrown when toolName is null or whitespace</exception>
     public async Task<Result<ToolDefinition>> GetToolDefinitionAsync(string toolName, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
@@ -224,6 +261,14 @@ public class HttpMcpClient : IMcpClientService
         }
     }
 
+    /// <summary>
+    /// Executes multiple tools sequentially, stopping on first failure.
+    /// Provides fail-fast behavior for dependent tool chains.
+    /// </summary>
+    /// <param name="toolCalls">Collection of tool calls to execute</param>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>Result containing successful tool executions or error information</returns>
+    /// <exception cref="ArgumentNullException">Thrown when toolCalls is null</exception>
     public async Task<Result<IEnumerable<ToolExecution>>> ExecuteToolsAsync(IEnumerable<ToolCall> toolCalls, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(toolCalls);
@@ -248,6 +293,15 @@ public class HttpMcpClient : IMcpClientService
         return Result<IEnumerable<ToolExecution>>.Success(executions);
     }
 
+    /// <summary>
+    /// Executes multiple tools in parallel with controlled concurrency.
+    /// Uses semaphore to limit concurrent executions and prevent server overload.
+    /// </summary>
+    /// <param name="toolCalls">Collection of tool calls to execute</param>
+    /// <param name="maxConcurrency">Maximum number of concurrent executions (default: 3)</param>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>Result containing successful tool executions or error information</returns>
+    /// <exception cref="ArgumentNullException">Thrown when toolCalls is null</exception>
     public async Task<Result<IEnumerable<ToolExecution>>> ExecuteToolsParallelAsync(
         IEnumerable<ToolCall> toolCalls,
         int maxConcurrency = 3,
@@ -294,8 +348,12 @@ public class HttpMcpClient : IMcpClientService
 
     #endregion
 
-    #region Private Helper Methods
+    #region Private Configuration Methods
 
+    /// <summary>
+    /// Configures the HTTP client with MCP-specific settings including headers, timeouts, and user agent.
+    /// Called during construction to establish baseline HTTP client configuration.
+    /// </summary>
     private void ConfigureHttpClient()
     {
         var options = _options.Value;
@@ -310,6 +368,14 @@ public class HttpMcpClient : IMcpClientService
         _httpClient.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
     }
 
+    /// <summary>
+    /// Ensures MCP connection is initialized using the standard initialization handshake.
+    /// Performs protocol version negotiation and capability exchange with the server.
+    /// Thread-safe initialization that only executes once per client instance.
+    /// </summary>
+    /// <param name="cancellationToken">Token to cancel the initialization</param>
+    /// <returns>Task representing the initialization operation</returns>
+    /// <exception cref="InvalidOperationException">Thrown when initialization fails</exception>
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         if (_isInitialized)
@@ -320,7 +386,14 @@ public class HttpMcpClient : IMcpClientService
         try
         {
             var options = _options.Value;
-            var protocolCapabilities = options.ClientCapabilities.ToProtocolFormat();
+            var protocolCapabilities = new DevMind.Shared.Models.McpClientCapabilities
+            {
+                Roots = options.ClientCapabilities.SupportsRoots ? new McpRootsCapability
+                {
+                    ListChanged = options.ClientCapabilities.SupportsRootsListChanged
+                } : null,
+                Sampling = options.ClientCapabilities.SupportsSampling ? new object() : null
+            };
 
             var initRequest = CreateJsonRpcRequest("initialize", new McpInitializeParams
             {
@@ -350,6 +423,17 @@ public class HttpMcpClient : IMcpClientService
         }
     }
 
+    #endregion
+
+    #region Private Protocol Methods
+
+    /// <summary>
+    /// Creates a JSON-RPC 2.0 request with auto-incrementing ID and standard protocol compliance.
+    /// Ensures proper request formatting according to JSON-RPC specification.
+    /// </summary>
+    /// <param name="method">RPC method name to invoke</param>
+    /// <param name="parameters">Method parameters (optional)</param>
+    /// <returns>Properly formatted JSON-RPC request</returns>
     private McpJsonRpcRequest CreateJsonRpcRequest(string method, object? parameters = null)
     {
         return new McpJsonRpcRequest
@@ -361,6 +445,14 @@ public class HttpMcpClient : IMcpClientService
         };
     }
 
+    /// <summary>
+    /// Sends JSON-RPC request over HTTP and handles response deserialization with comprehensive error handling.
+    /// Supports both success responses and error responses according to JSON-RPC 2.0 specification.
+    /// </summary>
+    /// <typeparam name="T">Expected response type</typeparam>
+    /// <param name="request">JSON-RPC request to send</param>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>Result containing deserialized response or error information</returns>
     private async Task<Result<T>> SendJsonRpcRequestAsync<T>(McpJsonRpcRequest request, CancellationToken cancellationToken)
         where T : class
     {
@@ -428,6 +520,12 @@ public class HttpMcpClient : IMcpClientService
         }
     }
 
+    /// <summary>
+    /// Attempts to deserialize response content as JSON-RPC error response.
+    /// Returns null if the content is not a valid error response.
+    /// </summary>
+    /// <param name="responseContent">Raw response content to parse</param>
+    /// <returns>Error response object or null if not an error</returns>
     private McpJsonRpcErrorResponse? TryDeserializeErrorResponse(string responseContent)
     {
         try
@@ -441,6 +539,12 @@ public class HttpMcpClient : IMcpClientService
         }
     }
 
+    /// <summary>
+    /// Extracts meaningful result content from MCP tool execution response.
+    /// Handles both text and data content types with fallback behavior.
+    /// </summary>
+    /// <param name="result">MCP tool execution result</param>
+    /// <returns>Extracted result content or default success message</returns>
     private object? ExtractToolResult(McpToolResult result)
     {
         if (result.Content?.Any() == true)
@@ -452,6 +556,12 @@ public class HttpMcpClient : IMcpClientService
         return "Tool executed successfully";
     }
 
+    /// <summary>
+    /// Maps HTTP status codes to appropriate tool error codes for consistent error handling.
+    /// Provides semantic error mapping based on HTTP response status.
+    /// </summary>
+    /// <param name="statusCode">HTTP status code from response</param>
+    /// <returns>Corresponding tool error code</returns>
     private static string GetErrorCodeFromStatusCode(System.Net.HttpStatusCode statusCode)
     {
         return statusCode switch
