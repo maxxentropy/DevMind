@@ -13,7 +13,7 @@ public class McpJsonRpcRequest
     public string JsonRpc { get; set; } = "2.0";
 
     [JsonPropertyName("id")]
-    public int Id { get; set; }
+    public object? Id { get; set; }
 
     [JsonPropertyName("method")]
     public string Method { get; set; } = string.Empty;
@@ -31,7 +31,7 @@ public class McpJsonRpcResponse<T>
     public string JsonRpc { get; set; } = "2.0";
 
     [JsonPropertyName("id")]
-    public int Id { get; set; }
+    public object? Id { get; set; }
 
     [JsonPropertyName("result")]
     public T? Result { get; set; }
@@ -49,7 +49,7 @@ public class McpJsonRpcErrorResponse
     public string JsonRpc { get; set; } = "2.0";
 
     [JsonPropertyName("id")]
-    public int? Id { get; set; }
+    public object? Id { get; set; }
 
     [JsonPropertyName("error")]
     public McpJsonRpcError? Error { get; set; }
