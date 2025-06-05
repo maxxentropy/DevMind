@@ -10,7 +10,8 @@ using System.Diagnostics;
 namespace DevMind.Infrastructure.McpClients;
 
 /// <summary>
-/// HTTP implementation of the MCP client service using the Response pattern
+/// HTTP implementation of the MCP client service using JSON-RPC 2.0 over HTTP
+/// Implements the Model Context Protocol standard for communication with MCP servers
 /// </summary>
 public class HttpMcpClient : IMcpClientService
 {
@@ -20,6 +21,8 @@ public class HttpMcpClient : IMcpClientService
     private readonly IOptions<McpClientOptions> _options;
     private readonly ILogger<HttpMcpClient> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+    private int _requestId = 1;
+    private bool _isInitialized = false;
 
     #endregion
 
@@ -37,8 +40,11 @@ public class HttpMcpClient : IMcpClientService
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false
+            WriteIndented = false,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
+
+        ConfigureHttpClient();
     }
 
     #endregion
@@ -49,53 +55,32 @@ public class HttpMcpClient : IMcpClientService
     {
         try
         {
-            _logger.LogDebug("Retrieving available tools from MCP server");
+            await EnsureInitializedAsync(cancellationToken);
 
-            var response = await _httpClient.GetAsync("/api/tools", cancellationToken);
+            _logger.LogDebug("Retrieving available tools from MCP server using tools/list method");
 
-            if (!response.IsSuccessStatusCode)
+            var request = CreateJsonRpcRequest("tools/list", new { });
+            var response = await SendJsonRpcRequestAsync<McpToolsListResponse>(request, cancellationToken);
+
+            if (response.IsFailure)
             {
-                return Result<IEnumerable<ToolDefinition>>.Failure(
-                    ToolErrorCodes.NetworkError,
-                    $"HTTP {response.StatusCode}: {response.ReasonPhrase}");
+                return Result<IEnumerable<ToolDefinition>>.Failure(response.Error);
             }
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
-            var mcpResponse = JsonSerializer.Deserialize<McpToolsResponse>(content, _jsonOptions);
-
-            if (mcpResponse?.Tools == null)
+            var mcpResponse = response.Value;
+            if (mcpResponse?.Result?.Tools == null)
             {
                 return Result<IEnumerable<ToolDefinition>>.Failure(
                     ToolErrorCodes.DataFormatError,
-                    "Invalid response format from MCP server");
+                    "Invalid tools list response from MCP server");
             }
 
-            var tools = mcpResponse.Tools.ToDomainModels();
+            // Convert from protocol format to domain models
+            var tools = mcpResponse.Result.Tools.ToDomainModels();
 
             _logger.LogDebug("Retrieved {ToolCount} tools from MCP server", tools.Count());
 
             return Result<IEnumerable<ToolDefinition>>.Success(tools);
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "Network error while retrieving tools");
-            return Result<IEnumerable<ToolDefinition>>.Failure(
-                ToolErrorCodes.NetworkError,
-                $"Network error: {ex.Message}");
-        }
-        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
-        {
-            _logger.LogError(ex, "Timeout while retrieving tools");
-            return Result<IEnumerable<ToolDefinition>>.Failure(
-                ToolErrorCodes.ConnectionTimeout,
-                "Request timeout while retrieving tools");
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "JSON parsing error while retrieving tools");
-            return Result<IEnumerable<ToolDefinition>>.Failure(
-                ToolErrorCodes.DataFormatError,
-                $"Invalid JSON response: {ex.Message}");
         }
         catch (Exception ex)
         {
@@ -114,89 +99,57 @@ public class HttpMcpClient : IMcpClientService
 
         try
         {
-            _logger.LogDebug("Executing tool: {ToolName}", toolCall.ToolName);
+            await EnsureInitializedAsync(cancellationToken);
 
-            var request = new McpToolRequest
+            _logger.LogDebug("Executing tool: {ToolName} via tools/call method", toolCall.ToolName);
+
+            var requestParams = new McpToolCallParams
             {
-                Tool = toolCall.ToolName,
-                Parameters = toolCall.Parameters,
-                SessionId = toolCall.SessionId?.ToString()
+                Name = toolCall.ToolName,
+                Arguments = toolCall.Parameters
             };
 
-            var requestJson = JsonSerializer.Serialize(request, _jsonOptions);
-            var requestContent = new StringContent(requestJson, System.Text.Encoding.UTF8, "application/json");
+            var request = CreateJsonRpcRequest("tools/call", requestParams);
+            var response = await SendJsonRpcRequestAsync<McpToolCallResponse>(request, cancellationToken);
 
-            var response = await _httpClient.PostAsync("/api/tools/execute", requestContent, cancellationToken);
             stopwatch.Stop();
 
-            if (!response.IsSuccessStatusCode)
+            if (response.IsFailure)
             {
                 return ToolExecution.Failure(
                     toolCall,
-                    GetErrorCodeFromStatusCode(response.StatusCode),
-                    $"HTTP {response.StatusCode}: {response.ReasonPhrase}",
+                    response.Error.Code,
+                    response.Error.Message,
                     stopwatch.Elapsed);
             }
 
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            var mcpResponse = JsonSerializer.Deserialize<McpToolResponse>(responseContent, _jsonOptions);
-
-            if (mcpResponse == null)
+            var mcpResponse = response.Value;
+            if (mcpResponse?.Result == null)
             {
                 return ToolExecution.Failure(
                     toolCall,
                     ToolErrorCodes.DataFormatError,
-                    "Invalid response format from MCP server",
+                    "Invalid tool execution response from MCP server",
                     stopwatch.Elapsed);
             }
 
-            if (!mcpResponse.Success)
+            var result = mcpResponse.Result;
+            if (result.IsError == true)
             {
                 return ToolExecution.Failure(
                     toolCall,
                     ToolErrorCodes.ExecutionFailed,
-                    mcpResponse.Error ?? "Tool execution failed",
-                    stopwatch.Elapsed,
-                    mcpResponse.Metadata);
+                    result.Content?.FirstOrDefault()?.Text ?? "Tool execution failed",
+                    stopwatch.Elapsed);
             }
 
             _logger.LogDebug("Successfully executed tool: {ToolName} in {Duration}ms",
                 toolCall.ToolName, stopwatch.ElapsedMilliseconds);
 
+            var resultContent = ExtractToolResult(result);
             return ToolExecution.Success(
                 toolCall,
-                mcpResponse.Result,
-                stopwatch.Elapsed,
-                mcpResponse.Metadata);
-        }
-        catch (HttpRequestException ex)
-        {
-            stopwatch.Stop();
-            _logger.LogError(ex, "Network error while executing tool: {ToolName}", toolCall.ToolName);
-            return ToolExecution.Failure(
-                toolCall,
-                ToolErrorCodes.NetworkError,
-                $"Network error: {ex.Message}",
-                stopwatch.Elapsed);
-        }
-        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
-        {
-            stopwatch.Stop();
-            _logger.LogError(ex, "Timeout while executing tool: {ToolName}", toolCall.ToolName);
-            return ToolExecution.Failure(
-                toolCall,
-                ToolErrorCodes.ExecutionTimeout,
-                "Tool execution timeout",
-                stopwatch.Elapsed);
-        }
-        catch (JsonException ex)
-        {
-            stopwatch.Stop();
-            _logger.LogError(ex, "JSON parsing error while executing tool: {ToolName}", toolCall.ToolName);
-            return ToolExecution.Failure(
-                toolCall,
-                ToolErrorCodes.DataFormatError,
-                $"Invalid JSON response: {ex.Message}",
+                resultContent,
                 stopwatch.Elapsed);
         }
         catch (Exception ex)
@@ -213,8 +166,14 @@ public class HttpMcpClient : IMcpClientService
         {
             _logger.LogDebug("Performing MCP server health check");
 
-            var response = await _httpClient.GetAsync("/api/health", cancellationToken);
+            // Use the dedicated health endpoint if available
+            var response = await _httpClient.GetAsync("/health", cancellationToken);
             var isHealthy = response.IsSuccessStatusCode;
+
+            if (!isHealthy)
+            {
+                _logger.LogWarning("MCP server health check failed with status: {StatusCode}", response.StatusCode);
+            }
 
             _logger.LogDebug("MCP server health check result: {IsHealthy}", isHealthy);
 
@@ -222,7 +181,7 @@ public class HttpMcpClient : IMcpClientService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during MCP server health check");
+            _logger.LogWarning(ex, "Error during MCP server health check");
             return Result<bool>.Success(false); // Health check failures return false, not error
         }
     }
@@ -233,39 +192,28 @@ public class HttpMcpClient : IMcpClientService
 
         try
         {
-            _logger.LogDebug("Retrieving definition for tool: {ToolName}", toolName);
+            // Get all tools and find the specific one
+            // MCP doesn't have a specific method for individual tool definitions
+            var toolsResult = await GetAvailableToolsAsync(cancellationToken);
 
-            var response = await _httpClient.GetAsync($"/api/tools/{Uri.EscapeDataString(toolName)}", cancellationToken);
+            if (toolsResult.IsFailure)
+            {
+                return Result<ToolDefinition>.Failure(toolsResult.Error);
+            }
 
-            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            var tool = toolsResult.Value.FirstOrDefault(t =>
+                t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase));
+
+            if (tool == null)
             {
                 return Result<ToolDefinition>.Failure(
                     ToolErrorCodes.ToolNotFound,
                     $"Tool '{toolName}' not found");
             }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                return Result<ToolDefinition>.Failure(
-                    ToolErrorCodes.NetworkError,
-                    $"HTTP {response.StatusCode}: {response.ReasonPhrase}");
-            }
-
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
-            var mcpTool = JsonSerializer.Deserialize<McpToolDefinition>(content, _jsonOptions);
-
-            if (mcpTool == null)
-            {
-                return Result<ToolDefinition>.Failure(
-                    ToolErrorCodes.DataFormatError,
-                    "Invalid tool definition format");
-            }
-
-            var toolDefinition = mcpTool.ToDomainModel();
-
             _logger.LogDebug("Retrieved definition for tool: {ToolName}", toolName);
 
-            return Result<ToolDefinition>.Success(toolDefinition);
+            return Result<ToolDefinition>.Success(tool);
         }
         catch (Exception ex)
         {
@@ -287,7 +235,7 @@ public class HttpMcpClient : IMcpClientService
             var result = await ExecuteToolAsync(toolCall, cancellationToken);
             results.Add(result);
 
-            // Stop on first failure
+            // Stop on first failure for sequential execution
             if (result.IsFailure)
             {
                 _logger.LogWarning("Tool execution failed, stopping sequence: {ToolName} - {Error}",
@@ -347,6 +295,162 @@ public class HttpMcpClient : IMcpClientService
     #endregion
 
     #region Private Helper Methods
+
+    private void ConfigureHttpClient()
+    {
+        var options = _options.Value;
+
+        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+        {
+            _httpClient.BaseAddress = new Uri(options.BaseUrl);
+        }
+
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "DevMind-MCP-Client/1.0");
+        _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
+        _httpClient.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+    }
+
+    private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
+    {
+        if (_isInitialized)
+            return;
+
+        _logger.LogDebug("Initializing MCP connection");
+
+        try
+        {
+            var options = _options.Value;
+            var protocolCapabilities = options.ClientCapabilities.ToProtocolFormat();
+
+            var initRequest = CreateJsonRpcRequest("initialize", new McpInitializeParams
+            {
+                ProtocolVersion = options.ProtocolVersion,
+                Capabilities = protocolCapabilities,
+                ClientInfo = new McpClientInfo
+                {
+                    Name = options.ClientIdentity.Name,
+                    Version = options.ClientIdentity.Version
+                }
+            });
+
+            var response = await SendJsonRpcRequestAsync<McpInitializeResponse>(initRequest, cancellationToken);
+
+            if (response.IsFailure)
+            {
+                throw new InvalidOperationException($"MCP initialization failed: {response.Error.Message}");
+            }
+
+            _isInitialized = true;
+            _logger.LogInformation("MCP connection initialized successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to initialize MCP connection");
+            throw;
+        }
+    }
+
+    private McpJsonRpcRequest CreateJsonRpcRequest(string method, object? parameters = null)
+    {
+        return new McpJsonRpcRequest
+        {
+            JsonRpc = "2.0",
+            Id = Interlocked.Increment(ref _requestId),
+            Method = method,
+            Params = parameters
+        };
+    }
+
+    private async Task<Result<T>> SendJsonRpcRequestAsync<T>(McpJsonRpcRequest request, CancellationToken cancellationToken)
+        where T : class
+    {
+        try
+        {
+            var requestJson = JsonSerializer.Serialize(request, _jsonOptions);
+            var content = new StringContent(requestJson, System.Text.Encoding.UTF8, "application/json");
+
+            _logger.LogTrace("Sending MCP request: {Method} with ID: {RequestId}", request.Method, request.Id);
+
+            var response = await _httpClient.PostAsync("/mcp", content, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                return Result<T>.Failure(
+                    GetErrorCodeFromStatusCode(response.StatusCode),
+                    $"HTTP {response.StatusCode}: {errorContent}");
+            }
+
+            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            // First, check if this is an error response
+            var errorResponse = TryDeserializeErrorResponse(responseContent);
+            if (errorResponse != null)
+            {
+                return Result<T>.Failure(
+                    ToolErrorCodes.ExecutionFailed,
+                    errorResponse.Error?.Message ?? "Unknown MCP error");
+            }
+
+            // Try to deserialize as success response
+            var successResponse = JsonSerializer.Deserialize<T>(responseContent, _jsonOptions);
+            if (successResponse == null)
+            {
+                return Result<T>.Failure(
+                    ToolErrorCodes.DataFormatError,
+                    "Failed to deserialize MCP response");
+            }
+
+            _logger.LogTrace("Received successful MCP response for request ID: {RequestId}", request.Id);
+
+            return Result<T>.Success(successResponse);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Network error during MCP request: {Method}", request.Method);
+            return Result<T>.Failure(
+                ToolErrorCodes.NetworkError,
+                $"Network error: {ex.Message}");
+        }
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+        {
+            _logger.LogError(ex, "Timeout during MCP request: {Method}", request.Method);
+            return Result<T>.Failure(
+                ToolErrorCodes.ExecutionTimeout,
+                "MCP request timeout");
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "JSON parsing error during MCP request: {Method}", request.Method);
+            return Result<T>.Failure(
+                ToolErrorCodes.DataFormatError,
+                $"Invalid JSON response: {ex.Message}");
+        }
+    }
+
+    private McpJsonRpcErrorResponse? TryDeserializeErrorResponse(string responseContent)
+    {
+        try
+        {
+            var errorResponse = JsonSerializer.Deserialize<McpJsonRpcErrorResponse>(responseContent, _jsonOptions);
+            return errorResponse?.Error != null ? errorResponse : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private object? ExtractToolResult(McpToolResult result)
+    {
+        if (result.Content?.Any() == true)
+        {
+            var content = result.Content.First();
+            return content.Text ?? content.Data;
+        }
+
+        return "Tool executed successfully";
+    }
 
     private static string GetErrorCodeFromStatusCode(System.Net.HttpStatusCode statusCode)
     {

@@ -4,12 +4,13 @@ using DevMind.Infrastructure.LlmProviders;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using static DevMind.Infrastructure.Configuration.LlmServiceExtensions;
+
+namespace DevMind.Infrastructure.LlmProviders;
 
 /// <summary>
 /// Factory implementation for creating LLM provider instances
 /// </summary>
-public class LlmProviderFactory : ILlmProviderFactory
+public class LlmProviderFactory : LlmServiceExtensions.ILlmProviderFactory
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<LlmProviderFactory> _logger;
@@ -20,13 +21,15 @@ public class LlmProviderFactory : ILlmProviderFactory
         ILogger<LlmProviderFactory> logger,
         IOptions<LlmProviderOptions> options)
     {
-        _serviceProvider = serviceProvider;
-        _logger = logger;
-        _options = options;
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public ILlmService CreateProvider(string providerName)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
+
         try
         {
             ILlmService? provider = providerName.ToLowerInvariant() switch
@@ -55,6 +58,8 @@ public class LlmProviderFactory : ILlmProviderFactory
 
     public bool IsProviderAvailable(string providerName)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
+
         try
         {
             CreateProvider(providerName);

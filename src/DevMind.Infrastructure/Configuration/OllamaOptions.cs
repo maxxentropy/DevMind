@@ -16,7 +16,7 @@ public class OllamaOptions : BaseLlmProviderOptions
     /// <summary>
     /// Ollama model to use. Defaults to Llama 2
     /// </summary>
-    public new string Model { get; set; } = "llama2";
+    public override string Model { get; set; } = "llama2";
 
     /// <summary>
     /// Top-k sampling parameter for controlling randomness

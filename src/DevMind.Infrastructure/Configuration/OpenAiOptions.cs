@@ -31,7 +31,7 @@ public class OpenAiOptions : BaseLlmProviderOptions
     /// <summary>
     /// OpenAI model to use. Defaults to GPT-4
     /// </summary>
-    public new string Model { get; set; } = "gpt-4";
+    public override string Model { get; set; } = "gpt-4";
 
     /// <summary>
     /// Frequency penalty for reducing repetition (-2.0 to 2.0)

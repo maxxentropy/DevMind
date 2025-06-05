@@ -26,7 +26,7 @@ public class AnthropicOptions : BaseLlmProviderOptions
     /// <summary>
     /// Claude model to use. Defaults to Claude 3 Sonnet
     /// </summary>
-    public new string Model { get; set; } = "claude-3-sonnet-20240229";
+    public override string Model { get; set; } = "claude-3-sonnet-20240229";
 
     /// <summary>
     /// Top-k sampling parameter for Claude (affects randomness)
