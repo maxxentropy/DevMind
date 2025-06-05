@@ -1,4 +1,6 @@
 using DevMind.CLI.Commands;
+using DevMind.CLI.Interfaces;
+using DevMind.CLI.Services;
 using DevMind.Core.Application.Interfaces;
 using DevMind.Infrastructure.Configuration;
 using DevMind.Infrastructure.McpClients;
@@ -15,8 +17,14 @@ public static class CliServiceExtensions
         services.AddScoped<ProcessCommand>();
         services.AddScoped<TestCommand>();
         services.AddScoped<VersionCommand>();
+        services.AddScoped<ConfigCommand>();    // Added
+        services.AddScoped<LlmTestCommand>(); // Added
+        services.AddScoped<StatusCommand>();    // Added
 
-        // MCP Client Service (was missing!)
+        // CLI Services
+        // services.AddSingleton<IConsoleService, ConsoleService>(); // Added - Uncomment if IConsoleService is used
+
+        // MCP Client Service
         services.AddScoped<IMcpClientService, HttpMcpClient>();
         services.Configure<McpClientOptions>(configuration.GetSection("McpClient"));
 

@@ -110,6 +110,18 @@ public class OpenAiOptions : BaseLlmProviderOptions
             SupportsVision = false,
             SupportsFunction = true
         },
+        ["gpt-4-mini"] = new()
+        {
+            Name = "GPT-4 Mini",
+            MaxTokens = 2048,
+            ContextWindow = 128000,
+            InputCostPer1000Tokens = 0.01m,
+            OutputCostPer1000Tokens = 0.03m,
+            Capabilities = new[] { "reasoning", "coding", "analysis", "creative-writing", "function-calling" },
+            IsLatest = true,
+            SupportsVision = true,
+            SupportsFunction = true
+        },
         ["gpt-4-turbo"] = new()
         {
             Name = "GPT-4 Turbo",
