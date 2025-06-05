@@ -5,6 +5,8 @@ using DevMind.Core.Extensions;
 using DevMind.Infrastructure.LlmProviders;
 using Microsoft.Extensions.Logging;
 
+using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
+
 namespace DevMind.Infrastructure.Services;
 
 /// <summary>
@@ -214,17 +216,24 @@ public class AgentOrchestrationService : IAgentOrchestrationService
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing available tools</returns>
-    private async Task<Result<IEnumerable<ToolDefinition>>> GetAvailableTools(CancellationToken cancellationToken)
+    private async Task<Result<IEnumerable<DomainToolDefinition>>> GetAvailableTools(CancellationToken cancellationToken)
     {
         try
         {
-            var tools = await _mcpClientService.GetAvailableToolsAsync(cancellationToken);
-            return Result<IEnumerable<ToolDefinition>>.Success(tools);
+            var toolsResult = await _mcpClientService.GetAvailableToolsAsync(cancellationToken);
+
+            if (toolsResult.IsFailure)
+            {
+                _logger.LogError("Failed to retrieve available tools: {Error}", toolsResult.Error.Message);
+                return Result<IEnumerable<DomainToolDefinition>>.Failure(toolsResult.Error);
+            }
+
+            return Result<IEnumerable<DomainToolDefinition>>.Success(toolsResult.Value);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve available tools");
-            return Result<IEnumerable<ToolDefinition>>.Failure(
+            return Result<IEnumerable<DomainToolDefinition>>.Failure(
                 LlmErrorCodes.ServiceUnavailable,
                 "Tool service is currently unavailable");
         }
@@ -239,7 +248,7 @@ public class AgentOrchestrationService : IAgentOrchestrationService
     /// <returns>Result containing the execution plan</returns>
     private async Task<Result<ExecutionPlan>> CreateExecutionPlan(
         UserIntent intent,
-        IEnumerable<ToolDefinition> availableTools,
+        IEnumerable<DomainToolDefinition> availableTools,
         CancellationToken cancellationToken)
     {
         var result = await _llmService.CreateExecutionPlanAsync(intent, availableTools, cancellationToken);
@@ -316,11 +325,7 @@ public class AgentOrchestrationService : IAgentOrchestrationService
         IEnumerable<ToolExecution> toolExecutions,
         CancellationToken cancellationToken)
     {
-        // Convert ToolExecutions to ToolResults for backward compatibility with LLM service
-        var toolResults = toolExecutions.Select(execution =>
-            ToolResult.Succeeded(execution.ToolCall, execution.GetResult<object>(), execution.Metadata));
-
-        var result = await _llmService.SynthesizeResponseAsync(intent, plan, toolResults, cancellationToken);
+        var result = await _llmService.SynthesizeResponseAsync(intent, plan, toolExecutions, cancellationToken);
 
         return result.OnFailure(error =>
             _logger.LogWarning("Response synthesis failed: {Error}", error.Message));

@@ -1,7 +1,6 @@
-// src/DevMind.Infrastructure/McpClients/HttpMcpClient.cs
-
 using DevMind.Core.Application.Interfaces;
 using DevMind.Core.Domain.ValueObjects;
+using DevMind.Infrastructure.Extensions;
 using DevMind.Shared.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -71,7 +70,7 @@ public class HttpMcpClient : IMcpClientService
                     "Invalid response format from MCP server");
             }
 
-            var tools = mcpResponse.Tools.Select(ConvertToToolDefinition);
+            var tools = mcpResponse.Tools.ToDomainModels();
 
             _logger.LogDebug("Retrieved {ToolCount} tools from MCP server", tools.Count());
 
@@ -253,7 +252,7 @@ public class HttpMcpClient : IMcpClientService
             }
 
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
-            var mcpTool = JsonSerializer.Deserialize<McpToolDto>(content, _jsonOptions);
+            var mcpTool = JsonSerializer.Deserialize<McpToolDefinition>(content, _jsonOptions);
 
             if (mcpTool == null)
             {
@@ -262,7 +261,7 @@ public class HttpMcpClient : IMcpClientService
                     "Invalid tool definition format");
             }
 
-            var toolDefinition = ConvertToToolDefinition(mcpTool);
+            var toolDefinition = mcpTool.ToDomainModel();
 
             _logger.LogDebug("Retrieved definition for tool: {ToolName}", toolName);
 
@@ -348,22 +347,6 @@ public class HttpMcpClient : IMcpClientService
     #endregion
 
     #region Private Helper Methods
-
-    private static ToolDefinition ConvertToToolDefinition(McpToolDto mcpTool)
-    {
-        var parameters = mcpTool.Parameters?.ToDictionary(
-            kvp => kvp.Key,
-            kvp => ToolParameter.Create(
-                kvp.Value.Type,
-                kvp.Value.Description,
-                kvp.Value.Required,
-                kvp.Value.Default)) ?? new Dictionary<string, ToolParameter>();
-
-        return ToolDefinition.Create(
-            mcpTool.Name,
-            mcpTool.Description,
-            parameters);
-    }
 
     private static string GetErrorCodeFromStatusCode(System.Net.HttpStatusCode statusCode)
     {

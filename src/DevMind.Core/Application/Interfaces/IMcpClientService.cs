@@ -1,5 +1,7 @@
 using DevMind.Core.Domain.ValueObjects;
 
+using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
+
 namespace DevMind.Core.Application.Interfaces;
 
 /// <summary>
@@ -35,7 +37,7 @@ public interface IMcpClientService
     /// <param name="toolName">The name of the tool to get information for</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing tool definition or error information</returns>
-    Task<Result<ToolDefinition>> GetToolDefinitionAsync(string toolName, CancellationToken cancellationToken = default);
+    Task<Result<DomainToolDefinition>> GetToolDefinitionAsync(string toolName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes multiple tool calls in sequence

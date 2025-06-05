@@ -1,10 +1,10 @@
-using DevMind.Core.Application.Interfaces;
 using DevMind.Core.Domain.Entities;
 using DevMind.Core.Domain.ValueObjects;
 using DevMind.Infrastructure.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
+
+using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
 
 namespace DevMind.Infrastructure.LlmProviders;
 
@@ -62,7 +62,7 @@ public class OllamaService : BaseLlmService
 
     protected override async Task<ExecutionPlan> CreateExecutionPlanInternalAsync(
         UserIntent intent,
-        IEnumerable<ToolDefinition> availableTools,
+        IEnumerable<DomainToolDefinition> availableTools,
         CancellationToken cancellationToken)
     {
         // Implement Ollama-specific execution plan creation

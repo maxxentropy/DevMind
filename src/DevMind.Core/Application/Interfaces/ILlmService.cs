@@ -3,6 +3,8 @@
 using DevMind.Core.Domain.Entities;
 using DevMind.Core.Domain.ValueObjects;
 
+using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
+
 namespace DevMind.Core.Application.Interfaces;
 
 /// <summary>

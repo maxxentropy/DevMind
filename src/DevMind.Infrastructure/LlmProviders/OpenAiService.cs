@@ -5,6 +5,8 @@ using DevMind.Infrastructure.LlmProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
+
 /// <summary>
 /// OpenAI implementation of the LLM service using the Response pattern
 /// </summary>
@@ -59,7 +61,7 @@ public class OpenAiService : BaseLlmService
 
     protected override async Task<ExecutionPlan> CreateExecutionPlanInternalAsync(
         UserIntent intent,
-        IEnumerable<ToolDefinition> availableTools,
+        IEnumerable<DomainToolDefinition> availableTools,
         CancellationToken cancellationToken)
     {
         // Implement OpenAI-specific execution plan creation
@@ -75,7 +77,7 @@ public class OpenAiService : BaseLlmService
     protected override async Task<string> SynthesizeResponseInternalAsync(
         UserIntent intent,
         ExecutionPlan plan,
-        IEnumerable<ToolResult> results,
+        IEnumerable<ToolExecution> results,
         CancellationToken cancellationToken)
     {
         // Implement OpenAI-specific response synthesis

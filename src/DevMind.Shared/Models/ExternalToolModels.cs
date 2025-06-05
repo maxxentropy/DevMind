@@ -1,6 +1,6 @@
 namespace DevMind.Shared.Models;
 
-// External MCP protocol models (for Infrastructure layer)
+// External tool models for non-MCP integrations
 public class ExternalToolDefinition
 {
     public string Name { get; set; } = string.Empty;

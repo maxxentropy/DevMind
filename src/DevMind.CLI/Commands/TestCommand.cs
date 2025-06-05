@@ -3,6 +3,8 @@ using DevMind.Core.Domain.Entities;
 using DevMind.Core.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
 
+using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
+
 namespace DevMind.CLI.Commands;
 
 public class TestCommand
@@ -40,7 +42,7 @@ public class TestCommand
             Console.WriteLine("✅");
 
             Console.Write("Creating test tool definition... ");
-            var toolDef = ToolDefinition.Create(
+            var toolDef = DomainToolDefinition.Create(
                 "test_tool", 
                 "A test tool for verification",
                 new Dictionary<string, ToolParameter>
@@ -55,7 +57,15 @@ public class TestCommand
 
             Console.WriteLine();
             Console.WriteLine("🎉 DevMind foundation is working!");
-            Console.WriteLine($"Response: {response.Content}");
+
+            if (response.IsSuccess)
+            {
+                Console.WriteLine($"Response: {response.Value.Content}");
+            }
+            else
+            {
+                Console.WriteLine($"Response failed: {response.Error.Message}");
+            }
 
             return 0;
         }
