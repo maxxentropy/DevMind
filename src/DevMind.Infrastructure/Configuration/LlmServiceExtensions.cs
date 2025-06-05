@@ -2,12 +2,16 @@
 
 using DevMind.Core.Application.Interfaces;
 using DevMind.Core.Application.Services;
+using DevMind.Infrastructure.Extensions;
 using DevMind.Infrastructure.LlmProviders;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Net;
+using Polly;
+using Polly.Extensions.Http;
+using Polly.Timeout;
 
 namespace DevMind.Infrastructure.Configuration;
 
@@ -113,19 +117,6 @@ public static class LlmServiceExtensions
         services.AddScoped<OllamaService>();
         services.AddScoped<AzureOpenAiService>();
 
-        // Register provider factory
-        //services.AddScoped<Func<string, ILlmService>>(serviceProvider => providerName =>
-        //{
-        //    return providerName.ToLowerInvariant() switch
-        //    {
-        //        "openai" => serviceProvider.GetRequiredService<OpenAiService>(),
-        //        "anthropic" => serviceProvider.GetRequiredService<AnthropicService>(),
-        //        "ollama" => serviceProvider.GetRequiredService<OllamaService>(),
-        //        "azure-openai" => serviceProvider.GetRequiredService<AzureOpenAiService>(),
-        //        _ => throw new ArgumentException($"Unknown LLM provider: {providerName}")
-        //    };
-        //});
-
         return services;
     }
 
@@ -138,44 +129,44 @@ public static class LlmServiceExtensions
     public static IServiceCollection AddLlmHttpClients(this IServiceCollection services, IConfiguration configuration)
     {
         // OpenAI HTTP client
-        //services.AddHttpClient<OpenAiService>("OpenAI", (serviceProvider, client) =>
-        //{
-        //    var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-        //    ConfigureOpenAiHttpClient(client, options);
-        //})
-        //.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
-        //.AddPolicyHandler(GetRetryPolicy())
-        //.AddPolicyHandler(GetTimeoutPolicy());
+        services.AddHttpClient<OpenAiService>("OpenAI", (serviceProvider, client) =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
+            ConfigureOpenAiHttpClient(client, options);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
+        .AddPolicyHandler(GetRetryPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy());
 
-        //// Anthropic HTTP client
-        //services.AddHttpClient<AnthropicService>("Anthropic", (serviceProvider, client) =>
-        //{
-        //    var options = serviceProvider.GetRequiredService<IOptions<AnthropicOptions>>().Value;
-        //    ConfigureAnthropicHttpClient(client, options);
-        //})
-        //.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
-        //.AddPolicyHandler(GetRetryPolicy())
-        //.AddPolicyHandler(GetTimeoutPolicy());
+        // Anthropic HTTP client
+        services.AddHttpClient<AnthropicService>("Anthropic", (serviceProvider, client) =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<AnthropicOptions>>().Value;
+            ConfigureAnthropicHttpClient(client, options);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
+        .AddPolicyHandler(GetRetryPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy());
 
-        //// Ollama HTTP client
-        //services.AddHttpClient<OllamaService>("Ollama", (serviceProvider, client) =>
-        //{
-        //    var options = serviceProvider.GetRequiredService<IOptions<OllamaOptions>>().Value;
-        //    ConfigureOllamaHttpClient(client, options);
-        //})
-        //.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
-        //.AddPolicyHandler(GetRetryPolicy())
-        //.AddPolicyHandler(GetTimeoutPolicy());
+        // Ollama HTTP client
+        services.AddHttpClient<OllamaService>("Ollama", (serviceProvider, client) =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<OllamaOptions>>().Value;
+            ConfigureOllamaHttpClient(client, options);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
+        .AddPolicyHandler(GetRetryPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy());
 
-        //// Azure OpenAI HTTP client
-        //services.AddHttpClient<AzureOpenAiService>("AzureOpenAI", (serviceProvider, client) =>
-        //{
-        //    var options = serviceProvider.GetRequiredService<IOptions<AzureOpenAiOptions>>().Value;
-        //    ConfigureAzureOpenAiHttpClient(client, options);
-        //})
-        //.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
-        //.AddPolicyHandler(GetRetryPolicy())
-        //.AddPolicyHandler(GetTimeoutPolicy());
+        // Azure OpenAI HTTP client
+        services.AddHttpClient<AzureOpenAiService>("AzureOpenAI", (serviceProvider, client) =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<AzureOpenAiOptions>>().Value;
+            ConfigureAzureOpenAiHttpClient(client, options);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
+        .AddPolicyHandler(GetRetryPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy());
 
         return services;
     }
@@ -217,36 +208,18 @@ public static class LlmServiceExtensions
         {
             var options = serviceProvider.GetRequiredService<IOptions<LlmProviderOptions>>().Value;
             var logger = serviceProvider.GetRequiredService<ILogger<ILlmService>>();
-            var providerFactory = serviceProvider.GetRequiredService<Func<string, ILlmService>>();
+            var providerFactory = serviceProvider.GetRequiredService<ILlmProviderFactory>();
 
             try
             {
-                var provider = providerFactory(options.Provider);
+                var provider = providerFactory.CreateProvider(options.Provider);
                 logger.LogInformation("Using LLM provider: {Provider}", options.Provider);
                 return provider;
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to create LLM provider {Provider}", options.Provider);
-
-                // Fallback mechanism
-                //if (options.Global.EnableFallback && options.FallbackProviders.Any())
-                //{
-                //    foreach (var fallbackProvider in options.FallbackProviders)
-                //    {
-                //        try
-                //        {
-                //            logger.LogWarning("Attempting fallback to provider: {FallbackProvider}", fallbackProvider);
-                //            return providerFactory(fallbackProvider);
-                //        }
-                //        catch
-                //        {
-                //            logger.LogWarning("Fallback provider {FallbackProvider} also failed", fallbackProvider);
-                //        }
-                //    }
-                //}
-
-                throw new InvalidOperationException($"Unable to create LLM provider {options.Provider} and all fallbacks failed", ex);
+                throw new InvalidOperationException($"Unable to create LLM provider {options.Provider}", ex);
             }
         });
 
@@ -260,12 +233,7 @@ public static class LlmServiceExtensions
     /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddLlmHealthChecks(this IServiceCollection services)
     {
-        //services.AddHealthChecks()
-        //    .AddCheck<LlmProviderHealthCheck>("llm-provider", timeout: TimeSpan.FromSeconds(30))
-        //    .AddCheck<OpenAiHealthCheck>("openai", timeout: TimeSpan.FromSeconds(30))
-        //    .AddCheck<AnthropicHealthCheck>("anthropic", timeout: TimeSpan.FromSeconds(30))
-        //    .AddCheck<OllamaHealthCheck>("ollama", timeout: TimeSpan.FromSeconds(30));
-
+        // Health checks would be implemented here when needed
         return services;
     }
 
@@ -346,40 +314,50 @@ public static class LlmServiceExtensions
 
     // ==================== POLLY POLICIES ====================
 
-    //    private static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()
-    //    {
-    //        return Policy
-    //            .HandleResult<HttpResponseMessage>(r => !r.IsSuccessStatusCode && ShouldRetry(r.StatusCode))
-    //            .WaitAndRetryAsync(
-    //                retryCount: 3,
-    //                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-    //                onRetry: (outcome, timespan, retryCount, context) =>
-    //                {
-    //                    var logger = context.GetLogger();
-    //                    logger?.LogWarning("Retry {RetryCount} for LLM request after {Delay}ms",
-    //                        retryCount, timespan.TotalMilliseconds);
-    //                });
-    //    }
+    private static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                onRetry: (outcome, timespan, retryCount, context) =>
+                {
+                    var logger = context.GetLogger();
+                    if (outcome.Exception != null)
+                    {
+                        logger?.LogWarning("Retry {RetryCount} for LLM request after {Delay}ms due to {Exception}",
+                            retryCount, timespan.TotalMilliseconds, outcome.Exception.GetType().Name);
+                    }
+                    else
+                    {
+                        logger?.LogWarning("Retry {RetryCount} for LLM request after {Delay}ms due to {StatusCode}",
+                            retryCount, timespan.TotalMilliseconds, outcome.Result?.StatusCode);
+                    }
+                });
+    }
 
-    //    private static IAsyncPolicy<HttpResponseMessage> GetTimeoutPolicy()
-    //    {
-    //        return Policy.TimeoutAsync<HttpResponseMessage>(TimeSpan.FromSeconds(120));
-    //    }
+    private static IAsyncPolicy<HttpResponseMessage> GetTimeoutPolicy()
+    {
+        return Policy.TimeoutAsync<HttpResponseMessage>(
+            timeout: TimeSpan.FromSeconds(120),
+            timeoutStrategy: TimeoutStrategy.Pessimistic);
+    }
 
-    //    private static bool ShouldRetry(HttpStatusCode statusCode)
-    //    {
-    //        return statusCode switch
-    //        {
-    //            HttpStatusCode.RequestTimeout => true,
-    //            HttpStatusCode.TooManyRequests => true,
-    //            HttpStatusCode.InternalServerError => true,
-    //            HttpStatusCode.BadGateway => true,
-    //            HttpStatusCode.ServiceUnavailable => true,
-    //            HttpStatusCode.GatewayTimeout => true,
-    //            _ => false
-    //        };
-    //    }
-    //}
+    private static bool ShouldRetry(HttpStatusCode statusCode)
+    {
+        return statusCode switch
+        {
+            HttpStatusCode.RequestTimeout => true,
+            HttpStatusCode.TooManyRequests => true,
+            HttpStatusCode.InternalServerError => true,
+            HttpStatusCode.BadGateway => true,
+            HttpStatusCode.ServiceUnavailable => true,
+            HttpStatusCode.GatewayTimeout => true,
+            _ => false
+        };
+    }
 
     // ==================== PROVIDER FACTORY ====================
 
@@ -421,7 +399,7 @@ public static class LlmServiceExtensions
                     "openai" => _serviceProvider.GetRequiredService<OpenAiService>(),
                     "anthropic" => _serviceProvider.GetRequiredService<AnthropicService>(),
                     "ollama" => _serviceProvider.GetRequiredService<OllamaService>(),
-                    "azure-openai" => _serviceProvider.GetRequiredService<AzureOpenAiService>() as ILlmService, // Explicit cast
+                    //"azure-openai" => _serviceProvider.GetRequiredService<AzureOpenAiService>(),
                     _ => throw new ArgumentException($"Unknown LLM provider: {providerName}")
                 };
 
@@ -547,7 +525,6 @@ public static class LlmServiceExtensions
     }
 
     // ==================== PLACEHOLDER INTERFACES ====================
-    // Note: These interfaces need to be implemented in separate files
 
     public interface ILlmMetricsCollector
     {
@@ -567,43 +544,6 @@ public static class LlmServiceExtensions
         void EndRequest(string requestId, bool success);
         TimeSpan GetAverageResponseTime(string provider);
     }
-
-    // Health check placeholders - these will be implemented later
-    //public class LlmProviderHealthCheck : IHealthCheck
-    //{
-    //    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    //    {
-    //        // TODO: Implement comprehensive health check
-    //        return Task.FromResult(HealthCheckResult.Healthy("LLM provider health check placeholder"));
-    //    }
-    //}
-
-    //public class OpenAiHealthCheck : IHealthCheck
-    //{
-    //    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    //    {
-    //        // TODO: Implement OpenAI-specific health check
-    //        return Task.FromResult(HealthCheckResult.Healthy("OpenAI health check placeholder"));
-    //    }
-    //}
-
-    //public class AnthropicHealthCheck : IHealthCheck
-    //{
-    //    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    //    {
-    //        // TODO: Implement Anthropic-specific health check
-    //        return Task.FromResult(HealthCheckResult.Healthy("Anthropic health check placeholder"));
-    //    }
-    //}
-
-    //public class OllamaHealthCheck : IHealthCheck
-    //{
-    //    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    //    {
-    //        // TODO: Implement Ollama-specific health check
-    //        return Task.FromResult(HealthCheckResult.Healthy("Ollama health check placeholder"));
-    //    }
-    //}
 
     // Placeholder implementations for metrics and monitoring
     public class LlmMetricsCollector : ILlmMetricsCollector

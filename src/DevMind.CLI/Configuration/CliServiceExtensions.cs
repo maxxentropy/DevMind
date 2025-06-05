@@ -1,5 +1,7 @@
 using DevMind.CLI.Commands;
+using DevMind.Core.Application.Interfaces;
 using DevMind.Infrastructure.Configuration;
+using DevMind.Infrastructure.McpClients;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -13,10 +15,17 @@ public static class CliServiceExtensions
         services.AddScoped<ProcessCommand>();
         services.AddScoped<TestCommand>();
         services.AddScoped<VersionCommand>();
-        
-        // Infrastructure services
+
+        // MCP Client Service (was missing!)
+        services.AddScoped<IMcpClientService, HttpMcpClient>();
+        services.Configure<McpClientOptions>(configuration.GetSection("McpClient"));
+
+        // Infrastructure services (includes basic services but not LLM)
         services.AddInfrastructureServices(configuration);
-        
+
+        // LLM services
+        services.AddLlmServices(configuration);
+
         return services;
     }
 }
