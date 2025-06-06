@@ -30,7 +30,7 @@ public class AgentOptions
     public int MaxConcurrentToolExecutions { get; set; } = 3;
 
     /// <summary>
-    //  Whether the agent should persist context between sessions.
+    ///  Whether the agent should persist context between sessions.
     /// </summary>
     public bool EnableContextPersistence { get; set; } = true;
 

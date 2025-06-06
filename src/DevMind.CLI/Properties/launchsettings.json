@@ -1,0 +1,50 @@
+{
+  "profiles": {
+    "DevMind.CLI": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development"
+      },
+      "commandLineArgs": "",
+      "workingDirectory": "$(SolutionDir)"
+    },
+    "DevMind.CLI (Test)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development"
+      },
+      "commandLineArgs": "test",
+      "workingDirectory": "$(SolutionDir)"
+    },
+    "DevMind.CLI (Status)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development"
+      },
+      "commandLineArgs": "status",
+      "workingDirectory": "$(SolutionDir)"
+    },
+    "DevMind.CLI (Config)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development"
+      },
+      "commandLineArgs": "config validate",
+      "workingDirectory": "$(SolutionDir)"
+    },
+    "DevMind.CLI (Interactive)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "DEVMIND_LOG_LEVEL": "Debug"
+      },
+      "commandLineArgs": "",
+      "workingDirectory": "$(SolutionDir)"
+    }
+  }
+}
