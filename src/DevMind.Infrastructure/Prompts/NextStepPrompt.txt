@@ -1,0 +1,38 @@
+{{persona}}
+
+# GUIDING PRINCIPLES
+{{guiding_principles}}
+
+# USER'S GOAL
+"{{user_goal}}"
+
+# AVAILABLE TOOLS
+{{tool_list}}
+
+# CONTEXT
+{{...}}
+
+# HISTORY
+{{history}}
+
+---
+# INSTRUCTIONS
+Review the goal and history, then decide the single next best action.
+If the goal is complete, respond with ONLY the text 'Final Answer:'.
+Otherwise, respond with ONLY a single, valid JSON object for the next tool call, adhering strictly to the schema below.
+
+# PLUGIN USAGE POLICY
+To use any tool named 'execute_plugin_*', you MUST follow this three-step sequence:
+1. First, use the `list_plugins` tool to find the exact `pluginId` for the plugin you want to use.
+2. Second, use the `validate_plugin` tool with the `pluginId` from step 1 to ensure the plugin will compile and is ready for use.
+3. Third, if and only if the validation from step 2 succeeds, you may then call the `execute_plugin_*` tool.
+
+# OUTPUT FORMAT
+Your response MUST be a single JSON object with the following schema:
+{
+  "name": "string (the name of the tool to call)",
+  "arguments": "object (a dictionary of parameters for the tool)"
+}
+---
+
+Next Action:

@@ -1,5 +1,8 @@
 namespace DevMind.Core.Domain.ValueObjects;
 
+/// <summary>
+/// 
+/// </summary>
 public class AgentResponse
 {
     public bool Success { get; private set; }
@@ -11,6 +14,12 @@ public class AgentResponse
 
     private AgentResponse() { }
 
+    /// <summary>
+    /// Creates a successful response with the given content and type.
+    /// </summary>
+    /// <param name="content"></param>
+    /// <param name="type"></param>
+    /// <returns></returns>
     public static AgentResponse CreateSuccess(string content, ResponseType type = ResponseType.Information)
     {
         return new AgentResponse
@@ -22,6 +31,12 @@ public class AgentResponse
         };
     }
 
+    /// <summary>
+    /// Creates a successful response with the given content and type, including metadata.
+    /// </summary>
+    /// <param name="error"></param>
+    /// <param name="originalRequest"></param>
+    /// <returns></returns>
     public static AgentResponse CreateError(string error, string? originalRequest = null)
     {
         var response = new AgentResponse
@@ -41,6 +56,12 @@ public class AgentResponse
         return response;
     }
 
+    /// <summary>
+    /// Creates a clarification request response with the given clarification and original request.
+    /// </summary>
+    /// <param name="clarification"></param>
+    /// <param name="originalRequest"></param>
+    /// <returns></returns>
     public static AgentResponse CreateClarificationRequest(string clarification, string originalRequest)
     {
         return new AgentResponse
@@ -53,6 +74,12 @@ public class AgentResponse
         };
     }
 
+    /// <summary>
+    /// Adds metadata to the response.
+    /// </summary>
+    /// <param name="key"></param>
+    /// <param name="value"></param>
+    /// <returns></returns>
     public AgentResponse WithMetadata(string key, object value)
     {
         Metadata[key] = value;
@@ -60,6 +87,9 @@ public class AgentResponse
     }
 }
 
+/// <summary>
+/// Represents the type of response from the agent.
+/// </summary>
 public enum ResponseType
 {
     Information = 0,

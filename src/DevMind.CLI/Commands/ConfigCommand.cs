@@ -1,8 +1,12 @@
+// src/DevMind.CLI/Commands/ConfigCommand.cs
+
+using DevMind.CLI.Interfaces;
 using DevMind.Infrastructure.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace DevMind.CLI.Commands;
 
@@ -13,288 +17,179 @@ public class ConfigCommand
 {
     private readonly IConfiguration _configuration;
     private readonly IOptions<LlmProviderOptions> _llmOptions;
+    private readonly IConsoleService _console;
     private readonly ILogger<ConfigCommand> _logger;
 
     public ConfigCommand(
         IConfiguration configuration,
         IOptions<LlmProviderOptions> llmOptions,
+        IConsoleService console,
         ILogger<ConfigCommand> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _llmOptions = llmOptions ?? throw new ArgumentNullException(nameof(llmOptions));
+        _console = console ?? throw new ArgumentNullException(nameof(console));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task<int> ExecuteAsync(string[] args)
     {
-        try
+        if (args.Length == 0)
         {
-            await Task.CompletedTask; // Make method async for consistency
-
-            if (args.Length > 0)
-            {
-                switch (args[0].ToLowerInvariant())
-                {
-                    case "validate":
-                        return ValidateConfiguration();
-                    case "show":
-                        return ShowConfiguration(args.Length > 1 ? args[1] : null);
-                    case "providers":
-                        return ShowProviders();
-                    default:
-                        ShowHelp();
-                        return 0;
-                }
-            }
-
-            return ShowConfiguration();
+            await ShowHelpAsync();
+            return 0;
         }
-        catch (Exception ex)
+
+        return args[0].ToLowerInvariant() switch
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Configuration command failed: {ex.Message}");
-            Console.ResetColor();
-
-            _logger.LogError(ex, "Configuration command execution failed");
-            return 1;
-        }
+            "validate" => await ValidateConfigurationAsync(),
+            "show" => await ShowConfigurationAsync(args.Length > 1 ? args[1] : null),
+            "providers" => await ShowProvidersAsync(),
+            _ => await ShowHelpAsync(),
+        };
     }
 
-    private int ValidateConfiguration()
+    private async Task<int> ValidateConfigurationAsync()
     {
-        Console.WriteLine("Validating DevMind Configuration...");
-        Console.WriteLine();
-
+        await _console.WriteBannerAsync("Configuration Validation");
         var hasErrors = false;
 
-        // Validate LLM Provider Options
-        Console.Write("LLM Provider Configuration... ");
         try
         {
+            await _console.WriteAsync("Validating LLM Provider Configuration... ");
             var llmOptions = _llmOptions.Value;
             var errors = llmOptions.Validate();
 
             if (errors.Any())
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("❌ INVALID");
-                Console.ResetColor();
+                await _console.WriteLineAsync("❌ INVALID", ConsoleColor.Red);
                 foreach (var error in errors)
                 {
-                    Console.WriteLine($"  - {error}");
+                    await _console.WriteErrorAsync($"  - {error}");
                 }
                 hasErrors = true;
             }
             else
             {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine("✅ VALID");
-                Console.ResetColor();
+                await _console.WriteLineAsync("✅ VALID", ConsoleColor.Green);
             }
         }
         catch (Exception ex)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("❌ ERROR");
-            Console.ResetColor();
-            Console.WriteLine($"  - {ex.Message}");
+            await _console.WriteLineAsync("❌ ERROR", ConsoleColor.Red);
+            await _console.WriteErrorAsync($"  - {ex.Message}");
             hasErrors = true;
         }
 
-        Console.WriteLine();
-
+        await _console.WriteLineAsync();
         if (hasErrors)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("❌ Configuration validation failed. Please fix the errors above.");
-            Console.ResetColor();
+            await _console.WriteErrorAsync("Configuration validation failed. Please fix the errors in your appsettings.json or environment variables.");
             return 1;
         }
-        else
-        {
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("✅ All configuration is valid!");
-            Console.ResetColor();
-            return 0;
-        }
-    }
 
-    private int ShowConfiguration(string? section = null)
-    {
-        Console.WriteLine("DevMind Configuration");
-        Console.WriteLine("====================");
-        Console.WriteLine();
-
-        if (section != null)
-        {
-            ShowConfigurationSection(section);
-        }
-        else
-        {
-            ShowLlmConfiguration();
-            Console.WriteLine();
-            ShowMcpConfiguration();
-            Console.WriteLine();
-            ShowAgentConfiguration();
-        }
-
+        await _console.WriteSuccessAsync("All configurations are valid!");
         return 0;
     }
 
-    private void ShowConfigurationSection(string section)
+    private async Task<int> ShowConfigurationAsync(string? section)
     {
-        var config = _configuration.GetSection(section);
-        if (!config.Exists())
+        if (string.IsNullOrWhiteSpace(section))
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"Configuration section '{section}' not found.");
-            Console.ResetColor();
-            return;
+            await _console.WriteBannerAsync("All Configurations");
+            await ShowLlmConfigurationAsync();
+            await ShowMcpConfigurationAsync();
+            return 0;
         }
 
-        Console.WriteLine($"{section} Configuration:");
-        Console.WriteLine(new string('-', section.Length + 15));
-
-        foreach (var child in config.GetChildren())
+        var configSection = _configuration.GetSection(section);
+        if (!configSection.Exists())
         {
-            PrintConfigurationValue(child, "");
+            await _console.WriteErrorAsync($"Configuration section '{section}' not found.");
+            return 1;
         }
+
+        await _console.WriteBannerAsync($"Configuration Section: {section}");
+        foreach (var child in configSection.GetChildren())
+        {
+            await PrintConfigurationValueAsync(child, "");
+        }
+        return 0;
     }
 
-    private void PrintConfigurationValue(IConfigurationSection section, string indent)
+    private async Task PrintConfigurationValueAsync(IConfigurationSection section, string indent)
     {
+        var keyColor = ConsoleColor.Cyan;
+        var valueColor = ConsoleColor.White;
+
         if (section.GetChildren().Any())
         {
-            Console.WriteLine($"{indent}{section.Key}:");
+            await _console.WriteLineAsync($"{indent}{section.Key}:", keyColor);
             foreach (var child in section.GetChildren())
             {
-                PrintConfigurationValue(child, indent + "  ");
+                await PrintConfigurationValueAsync(child, indent + "  ");
             }
         }
         else
         {
             var value = section.Value;
-
-            // Mask sensitive values
             if (IsSensitiveKey(section.Key))
             {
-                value = value != null ? "***CONFIGURED***" : "NOT SET";
+                value = string.IsNullOrWhiteSpace(value) ? "NOT SET" : "***REDACTED***";
+                valueColor = ConsoleColor.DarkYellow;
             }
-
-            Console.WriteLine($"{indent}{section.Key}: {value ?? "null"}");
+            await _console.WriteAsync($"{indent}{section.Key}: ", keyColor);
+            await _console.WriteLineAsync(value ?? "null", valueColor);
         }
     }
 
-    private static bool IsSensitiveKey(string key)
+    private bool IsSensitiveKey(string key) =>
+        new[] { "apikey", "secret", "password", "token" }.Any(s => key.ToLowerInvariant().Contains(s));
+
+    private async Task ShowLlmConfigurationAsync()
     {
-        var sensitiveKeys = new[] { "apikey", "secret", "password", "token", "key" };
-        return sensitiveKeys.Any(k => key.ToLowerInvariant().Contains(k));
+        await _console.WriteBannerAsync("LLM Provider Configuration");
+        var llmOptions = _llmOptions.Value;
+        await _console.WriteKeyValueAsync("Active Provider", llmOptions.Provider, 20, ConsoleColor.Yellow);
+        await _console.WriteKeyValueAsync("Config Summary", llmOptions.GetConfigurationSummary(), 20, ConsoleColor.Yellow);
     }
 
-    private void ShowLlmConfiguration()
+    private async Task ShowMcpConfigurationAsync()
     {
-        Console.WriteLine("LLM Provider Configuration:");
-        Console.WriteLine("---------------------------");
-
-        try
-        {
-            var llmOptions = _llmOptions.Value;
-            Console.WriteLine($"Active Provider: {llmOptions.Provider}");
-            Console.WriteLine($"Configuration Summary: {llmOptions.GetConfigurationSummary()}");
-        }
-        catch (Exception ex)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Error reading LLM configuration: {ex.Message}");
-            Console.ResetColor();
-        }
-    }
-
-    private void ShowMcpConfiguration()
-    {
-        Console.WriteLine("MCP Client Configuration:");
-        Console.WriteLine("-------------------------");
-
+        await _console.WriteBannerAsync("MCP Client Configuration");
         var mcpSection = _configuration.GetSection("McpClient");
         if (mcpSection.Exists())
         {
-            Console.WriteLine($"Base URL: {mcpSection["BaseUrl"]}");
-            Console.WriteLine($"Timeout: {mcpSection["TimeoutSeconds"]}s");
-            Console.WriteLine($"Retry Attempts: {mcpSection["RetryAttempts"]}");
-            Console.WriteLine($"Health Checks: {mcpSection["EnableHealthChecks"]}");
-        }
-        else
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("MCP configuration not found - using defaults");
-            Console.ResetColor();
+            await _console.WriteKeyValueAsync("Base URL", mcpSection["BaseUrl"], 20);
+            await _console.WriteKeyValueAsync("Timeout", $"{mcpSection["TimeoutSeconds"]}s", 20);
         }
     }
 
-    private void ShowAgentConfiguration()
+    private async Task<int> ShowProvidersAsync()
     {
-        Console.WriteLine("Agent Configuration:");
-        Console.WriteLine("--------------------");
-
-        var agentSection = _configuration.GetSection("Agent");
-        if (agentSection.Exists())
-        {
-            Console.WriteLine($"Working Directory: {agentSection["DefaultWorkingDirectory"]}");
-            Console.WriteLine($"Execution Timeout: {agentSection["MaxExecutionTimeoutMinutes"]} minutes");
-            Console.WriteLine($"Max Concurrent Tools: {agentSection["MaxConcurrentToolExecutions"]}");
-            Console.WriteLine($"Context Persistence: {agentSection["EnableContextPersistence"]}");
-        }
-        else
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("Agent configuration not found - using defaults");
-            Console.ResetColor();
-        }
-    }
-
-    private int ShowProviders()
-    {
-        Console.WriteLine("Available LLM Providers:");
-        Console.WriteLine("========================");
-        Console.WriteLine();
-
-        var providers = new[]
-        {
-            ("OpenAI", "GPT-4, GPT-3.5-turbo models", "https://api.openai.com"),
-            ("Anthropic", "Claude models", "https://api.anthropic.com"),
-            ("Ollama", "Local models", "http://localhost:11434"),
-            ("Azure OpenAI", "Azure-hosted OpenAI models", "Azure endpoint")
+        await _console.WriteBannerAsync("Available LLM Providers");
+        var providers = new[] {
+            ("openai", "Supports GPT-4, GPT-3.5 models. Good for general purpose tasks and reasoning."),
+            ("anthropic", "Supports Claude models. Strong in analysis and coding."),
+            ("ollama", "Supports local models like Llama, CodeLlama. Best for privacy and offline use."),
+            ("azure-openai", "Enterprise-grade Azure-hosted OpenAI models.")
         };
-
-        foreach (var (name, description, endpoint) in providers)
+        foreach (var (name, desc) in providers)
         {
-            Console.WriteLine($"{name}:");
-            Console.WriteLine($"  Description: {description}");
-            Console.WriteLine($"  Endpoint: {endpoint}");
-            Console.WriteLine();
+            await _console.WriteAsync($"{name,-15}", ConsoleColor.Yellow);
+            await _console.WriteLineAsync(desc, ConsoleColor.White);
         }
-
-        Console.WriteLine("To configure a provider, update the appsettings.json file");
-        Console.WriteLine("or use environment variables with the DEVMIND_ prefix.");
-
         return 0;
     }
 
-    private static void ShowHelp()
+    private async Task<int> ShowHelpAsync()
     {
-        Console.WriteLine("DevMind Configuration Command");
-        Console.WriteLine();
-        Console.WriteLine("Usage:");
-        Console.WriteLine("  devmind config [subcommand]");
-        Console.WriteLine();
-        Console.WriteLine("Subcommands:");
-        Console.WriteLine("  validate          Validate current configuration");
-        Console.WriteLine("  show [section]    Show configuration (optionally for specific section)");
-        Console.WriteLine("  providers         Show available LLM providers");
-        Console.WriteLine();
-        Console.WriteLine("Examples:");
-        Console.WriteLine("  devmind config validate");
-        Console.WriteLine("  devmind config show Llm");
-        Console.WriteLine("  devmind config providers");
+        await _console.WriteBannerAsync("Config Command Help");
+        await _console.WriteLineAsync("Usage: devmind config [subcommand]");
+        await _console.WriteLineAsync("\nSubcommands:");
+        await _console.WriteKeyValueAsync("validate", "Validate current configuration.", 12);
+        await _console.WriteKeyValueAsync("show [section]", "Show all or a specific section of the configuration.", 12);
+        await _console.WriteKeyValueAsync("providers", "List available LLM providers.", 12);
+        return 0;
     }
 }

@@ -1,25 +1,33 @@
-using Microsoft.Extensions.Logging;
+// src/DevMind.CLI/Commands/VersionCommand.cs
+
+using DevMind.CLI.Interfaces;
+using System;
+using System.Reflection;
+using System.Threading.Tasks;
 
 namespace DevMind.CLI.Commands;
 
 public class VersionCommand
 {
-    private readonly ILogger<VersionCommand> _logger;
+    private readonly IConsoleService _console;
 
-    public VersionCommand(ILogger<VersionCommand> logger)
+    public VersionCommand(IConsoleService console)
     {
-        _logger = logger;
+        _console = console;
     }
 
-    public Task<int> ExecuteAsync()
+    public async Task<int> ExecuteAsync()
     {
-        Console.WriteLine("DevMind AI Development Agent");
-        Console.WriteLine("Version: 1.0.0-alpha");
-        Console.WriteLine("Build: " + DateTime.Now.ToString("yyyy-MM-dd"));
-        Console.WriteLine();
-        Console.WriteLine("Clean Architecture foundation ready!");
-        Console.WriteLine("Next: Add LLM integration for intelligent features.");
-        
-        return Task.FromResult(0);
+        await _console.WriteBannerAsync("DevMind AI Development Agent");
+
+        var version = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 1, 0);
+
+        await _console.WriteKeyValueAsync("Version", $"{version.Major}.{version.Minor}.{version.Build}", 15, ConsoleColor.Yellow);
+        await _console.WriteKeyValueAsync("Build Date", new DateTime(2000, 1, 1).AddDays(version.Build).ToShortDateString(), 15, ConsoleColor.Yellow);
+        await _console.WriteKeyValueAsync(".NET Version", Environment.Version.ToString(), 15, ConsoleColor.Yellow);
+
+        await _console.WriteLineAsync("\nCopyright (c) 2025, Sean Bennington. All rights reserved.", ConsoleColor.DarkGray);
+
+        return 0;
     }
 }

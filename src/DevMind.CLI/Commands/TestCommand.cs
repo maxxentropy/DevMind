@@ -1,78 +1,64 @@
+// src/DevMind.CLI/Commands/TestCommand.cs
+
+using DevMind.CLI.Interfaces;
 using DevMind.Core.Application.Interfaces;
-using DevMind.Core.Domain.Entities;
 using DevMind.Core.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
-
-using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
+using System;
+using System.Threading.Tasks;
 
 namespace DevMind.CLI.Commands;
 
 public class TestCommand
 {
     private readonly IAgentOrchestrationService _agentService;
+    private readonly IConsoleService _console;
     private readonly ILogger<TestCommand> _logger;
 
     public TestCommand(
         IAgentOrchestrationService agentService,
+        IConsoleService console,
         ILogger<TestCommand> logger)
     {
         _agentService = agentService;
+        _console = console;
         _logger = logger;
     }
 
     public async Task<int> ExecuteAsync()
     {
+        await _console.WriteBannerAsync("DevMind Foundation Test");
+
         try
         {
-            Console.WriteLine("Testing DevMind foundation...");
+            await _console.WriteLineAsync("This test verifies the agent's core orchestration pipeline using mock services.");
+            await _console.WriteLineAsync("It ensures all internal components are wired correctly.", ConsoleColor.Gray);
+            await _console.WriteLineAsync();
 
-            // Test basic domain models
-            Console.Write("Creating test user request... ");
-            var request = UserRequest.Create("test basic functionality", Environment.CurrentDirectory);
-            Console.WriteLine("✅");
+            await _console.WriteAsync("🚀 Processing a test request through the agent... ");
 
-            Console.Write("Creating test user intent... ");
-            var intent = UserIntent.Create(request.Content, IntentType.AnalyzeCode);
-            Console.WriteLine("✅");
+            var request = UserRequest.Create("Run a foundational test of the system.", Guid.NewGuid().ToString());
+            var result = await _agentService.ProcessUserRequestAsync(request);
 
-            Console.Write("Creating test execution plan... ");
-            var plan = ExecutionPlan.Create(intent);
-            var toolCall = ToolCall.Create("test_tool", new Dictionary<string, object> { ["test"] = "value" });
-            plan.AddStep(toolCall);
-            Console.WriteLine("✅");
-
-            Console.Write("Creating test tool definition... ");
-            var toolDef = DomainToolDefinition.Create(
-                "test_tool", 
-                "A test tool for verification",
-                new Dictionary<string, ToolParameter>
-                {
-                    ["test_param"] = ToolParameter.Create("string", "Test parameter", true)
-                });
-            Console.WriteLine("✅");
-
-            Console.Write("Testing agent orchestration service... ");
-            var response = await _agentService.ProcessUserRequestAsync(request);
-            Console.WriteLine("✅");
-
-            Console.WriteLine();
-            Console.WriteLine("🎉 DevMind foundation is working!");
-
-            if (response.IsSuccess)
+            if (result.IsSuccess)
             {
-                Console.WriteLine($"Response: {response.Value.Content}");
+                await _console.WriteLineAsync("✅ PASSED", ConsoleColor.Green);
+                await _console.WriteSuccessAsync("Agent orchestration pipeline completed successfully.");
+                await _console.WriteLineAsync("Agent Response:", ConsoleColor.Yellow);
+                await _console.WriteBoxAsync(result.Value.Content, contentColor: ConsoleColor.Cyan);
+                return 0;
             }
             else
             {
-                Console.WriteLine($"Response failed: {response.Error.Message}");
+                await _console.WriteLineAsync("❌ FAILED", ConsoleColor.Red);
+                await _console.WriteErrorAsync($"Agent orchestration failed: {result.Error.Message}");
+                return 1;
             }
-
-            return 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error: {ex.Message}");
-            _logger.LogError(ex, "Test failed");
+            _logger.LogError(ex, "Foundation test failed with a critical exception.");
+            await _console.WriteErrorAsync($"Test failed: {ex.Message}");
             return 1;
         }
     }

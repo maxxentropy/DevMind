@@ -1,19 +1,27 @@
+using System;
+using System.Collections.Generic;
+
 namespace DevMind.Core.Domain.ValueObjects;
 
-public class UserRequest
+/// <summary>
+/// Represents a user's request to the agent.
+/// Defined as a record for immutability and value-based equality.
+/// </summary>
+public record UserRequest
 {
-    public string Content { get; private set; } = string.Empty;
-    public string WorkingDirectory { get; private set; } = string.Empty;
-    public DateTime Timestamp { get; private set; }
-    public Dictionary<string, object> Context { get; private set; } = new();
-    public Guid? SessionId { get; private set; }
+    public string Content { get; init; } = string.Empty;
+    public string WorkingDirectory { get; init; } = string.Empty;
+    public DateTime Timestamp { get; init; }
+    public Dictionary<string, object> Context { get; init; } = new();
+    public Guid? SessionId { get; init; }
 
+    // Private constructor for the factory method
     private UserRequest() { }
 
     public static UserRequest Create(string content, string? workingDirectory = null, Guid? sessionId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
-        
+
         return new UserRequest
         {
             Content = content,
@@ -21,11 +29,5 @@ public class UserRequest
             Timestamp = DateTime.UtcNow,
             SessionId = sessionId
         };
-    }
-
-    public UserRequest WithContext(Dictionary<string, object> context)
-    {
-        Context = context ?? new Dictionary<string, object>();
-        return this;
     }
 }

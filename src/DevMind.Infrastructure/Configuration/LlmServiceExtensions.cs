@@ -280,7 +280,7 @@ public static class LlmServiceExtensions
 
                 // Instead of throwing, return a mock service for testing
                 logger.LogWarning("Falling back to mock LLM service due to configuration error");
-                return new MockLlmService(logger);
+                return new MockLlmService();
             }
         });
 
@@ -415,53 +415,6 @@ public static class LlmServiceExtensions
 
     // ==================== MOCK LLM SERVICE ====================
 
-    /// <summary>
-    /// Mock LLM service for testing when no real provider is available
-    /// </summary>
-    internal class MockLlmService : ILlmService
-    {
-        private readonly ILogger _logger;
-
-        public MockLlmService(ILogger logger)
-        {
-            _logger = logger;
-        }
-
-        public Task<Result<UserIntent>> AnalyzeIntentAsync(UserRequest request, CancellationToken cancellationToken = default)
-        {
-            _logger.LogWarning("Using mock LLM service for intent analysis");
-            var intent = UserIntent.Create(request.Content, IntentType.AnalyzeCode);
-            return Task.FromResult(Result<UserIntent>.Success(intent));
-        }
-
-        public Task<Result<ExecutionPlan>> CreateExecutionPlanAsync(UserIntent intent, IEnumerable<ToolDefinition> availableTools, CancellationToken cancellationToken = default)
-        {
-            _logger.LogWarning("Using mock LLM service for execution planning");
-            var plan = ExecutionPlan.Create(intent);
-            var toolCall = ToolCall.Create("mock_tool", new Dictionary<string, object> { ["input"] = intent.OriginalRequest });
-            plan.AddStep(toolCall);
-            return Task.FromResult(Result<ExecutionPlan>.Success(plan));
-        }
-
-        public Task<Result<string>> SynthesizeResponseAsync(UserIntent intent, ExecutionPlan plan, IEnumerable<ToolExecution> results, CancellationToken cancellationToken = default)
-        {
-            _logger.LogWarning("Using mock LLM service for response synthesis");
-            var response = $"Mock response: I've processed your request '{intent.OriginalRequest}' using {results.Count()} tools.";
-            return Task.FromResult(Result<string>.Success(response));
-        }
-
-        public Task<Result<string>> GenerateResponseAsync(string prompt, LlmOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            _logger.LogWarning("Using mock LLM service for response generation");
-            var response = $"Mock response to: {prompt.Substring(0, Math.Min(50, prompt.Length))}...";
-            return Task.FromResult(Result<string>.Success(response));
-        }
-
-        public Task<Result<bool>> HealthCheckAsync(CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(Result<bool>.Success(false)); // Mock always reports unhealthy
-        }
-    }
 
     // Placeholder interfaces and implementations remain the same...
     public interface ILlmMetricsCollector

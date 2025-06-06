@@ -109,6 +109,13 @@ public class Program
         Host.CreateDefaultBuilder(args)
             .ConfigureAppConfiguration((context, config) =>
             {
+                if (context.HostingEnvironment.IsDevelopment() ||
+                    context.HostingEnvironment.EnvironmentName.Equals("LocalDevelopment", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"[DIAGNOSTIC] Loading user secrets for '{context.HostingEnvironment.EnvironmentName}' environment.");
+                    config.AddUserSecrets<Program>();
+                }
+
                 config.SetBasePath(Directory.GetCurrentDirectory())
                       .AddJsonFile("appsettings.json", optional: true)
                       .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true)

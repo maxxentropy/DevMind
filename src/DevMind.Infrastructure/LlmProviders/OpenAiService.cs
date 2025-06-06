@@ -1,22 +1,26 @@
+// src/DevMind.Infrastructure/LlmProviders/OpenAiService.cs
+
+using DevMind.Core.Application.Interfaces;
 using DevMind.Core.Domain.Entities;
 using DevMind.Core.Domain.ValueObjects;
 using DevMind.Infrastructure.Configuration;
-using DevMind.Infrastructure.LlmProviders;
 using DevMind.Shared.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
+using System.Threading;
+using System.Threading.Tasks;
 using DomainToolDefinition = DevMind.Core.Domain.ValueObjects.ToolDefinition;
 
 namespace DevMind.Infrastructure.LlmProviders;
 
-/// <summary>
-/// OpenAI implementation of the LLM service using the Response pattern
-/// </summary>
 public class OpenAiService : BaseLlmService
 {
     #region Private Fields
@@ -24,6 +28,7 @@ public class OpenAiService : BaseLlmService
     private readonly HttpClient _httpClient;
     private readonly IOptions<OpenAiOptions> _options;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly IPromptService _promptService;
 
     #endregion
 
@@ -39,16 +44,19 @@ public class OpenAiService : BaseLlmService
         HttpClient httpClient,
         IOptions<OpenAiOptions> options,
         ILogger<OpenAiService> logger,
-        LlmErrorHandler errorHandler)
+        LlmErrorHandler errorHandler,
+        IPromptService promptService)
         : base(logger, errorHandler)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _promptService = promptService ?? throw new ArgumentNullException(nameof(promptService));
 
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            WriteIndented = false
         };
 
         ConfigureHttpClient();
@@ -60,144 +68,80 @@ public class OpenAiService : BaseLlmService
 
     protected override async Task<UserIntent> AnalyzeIntentInternalAsync(UserRequest request, CancellationToken cancellationToken)
     {
-        var configValidation = ValidateConfiguration();
-        if (configValidation.IsFailure)
-        {
-            throw new InvalidOperationException($"OpenAI configuration is invalid: {configValidation.Error.Message}");
-        }
-
         var intentPrompt = CreateIntentAnalysisPrompt(request.Content);
         var response = await GenerateResponseInternalAsync(intentPrompt, LlmOptions.ForAnalysis, cancellationToken);
-
-        // Parse the response to extract intent type and confidence
         var (intentType, confidence) = ParseIntentResponse(response);
-
-        // Create intent without SessionId for now (maintaining current domain model)
-        var intent = UserIntent.Create(request.Content, intentType);
+        var intent = UserIntent.Create(request.Content, intentType, sessionId: request.SessionId);
         intent.UpdateConfidence(confidence);
-
         return intent;
     }
 
-    protected override async Task<ExecutionPlan> CreateExecutionPlanInternalAsync(
-        UserIntent intent,
-        IEnumerable<DomainToolDefinition> availableTools,
-        CancellationToken cancellationToken)
+    protected override async Task<ToolCall?> DetermineNextStepInternalAsync(UserIntent intent, IEnumerable<DomainToolDefinition> availableTools, List<Result<ToolExecution>> history, CancellationToken cancellationToken)
     {
-        var planningPrompt = CreatePlanningPrompt(intent, availableTools);
+        var planningPrompt = await _promptService.CreateNextStepPromptAsync(intent, availableTools, history);
         var response = await GenerateResponseInternalAsync(planningPrompt, LlmOptions.ForAnalysis, cancellationToken);
 
-        var plan = ExecutionPlan.Create(intent);
-
-        // Parse the response to extract tool calls
-        // Use null for SessionId since UserIntent doesn't have it
-        // The orchestration service will set the proper SessionId when executing
-        var toolCalls = ParsePlanningResponse(response, sessionId: null);
-        foreach (var toolCall in toolCalls)
+        if (string.IsNullOrWhiteSpace(response) || response.Contains("Final Answer:", StringComparison.OrdinalIgnoreCase))
         {
-            plan.AddStep(toolCall);
+            _logger.LogInformation("Model determined the final answer has been reached or returned no action.");
+            return null; // This is the explicit "task complete" signal.
         }
 
-        return plan;
+        var toolCall = ParsePlanningResponse(response, intent.SessionId).FirstOrDefault();
+
+        // THIS IS THE FIX: If we did not get a "Final Answer" and we also could not parse a tool call,
+        // it's a reasoning failure. We throw an exception, which our LlmErrorHandler will catch
+        // and convert into a proper Result.Failure, stopping the orchestration loop correctly.
+        if (toolCall == null)
+        {
+            throw new InvalidOperationException($"The LLM failed to determine the next action. It did not return a valid tool call or the 'Final Answer:' signal. Response was: {response}");
+        }
+
+        return toolCall;
     }
 
-    protected override async Task<string> SynthesizeResponseInternalAsync(
-        UserIntent intent,
-        ExecutionPlan plan,
-        IEnumerable<ToolExecution> results,
-        CancellationToken cancellationToken)
+    protected override async Task<string> SynthesizeResponseInternalAsync(UserIntent intent, IEnumerable<ToolExecution> results, CancellationToken cancellationToken)
     {
-        var synthesisPrompt = CreateSynthesisPrompt(intent, plan, results);
+        var synthesisPrompt = await _promptService.CreateSynthesisPromptAsync(intent, results);
         return await GenerateResponseInternalAsync(synthesisPrompt, LlmOptions.ForSynthesis, cancellationToken);
     }
 
-    protected override async Task<string> GenerateResponseInternalAsync(
-        string prompt,
-        LlmOptions options,
-        CancellationToken cancellationToken)
+    protected override async Task<string> SummarizeHistoryInternalAsync(UserIntent intent, List<Result<ToolExecution>> history, CancellationToken cancellationToken)
     {
-        try
+        var summarizationPrompt = CreateSummarizationPrompt(intent, history);
+        var options = new LlmOptions { MaxTokens = 500, Temperature = 0.0 };
+        return await GenerateResponseInternalAsync(summarizationPrompt, options, cancellationToken);
+    }
+
+    protected override async Task<string> GenerateResponseInternalAsync(string prompt, LlmOptions options, CancellationToken cancellationToken)
+    {
+        var chatRequest = CreateChatRequest(prompt, options);
+        var requestJson = JsonSerializer.Serialize(chatRequest, _jsonOptions);
+        var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.PostAsync("/v1/chat/completions", content, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
         {
-            var chatRequest = CreateChatRequest(prompt, options);
-            var requestJson = JsonSerializer.Serialize(chatRequest, _jsonOptions);
-            var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            _logger.LogDebug("Sending OpenAI request: {Model}, MaxTokens: {MaxTokens}, Temperature: {Temperature}",
-                chatRequest.Model, chatRequest.MaxTokens, chatRequest.Temperature);
-
-            var response = await _httpClient.PostAsync("/v1/chat/completions", content, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                throw new HttpRequestException($"OpenAI API request failed with status {response.StatusCode}: {errorContent}");
-            }
-
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            var chatResponse = JsonSerializer.Deserialize<OpenAiChatResponse>(responseContent, _jsonOptions);
-
-            if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
-            {
-                throw new InvalidOperationException("OpenAI API returned no choices in response");
-            }
-
-            var message = chatResponse.Choices[0].Message;
-            if (string.IsNullOrEmpty(message?.Content))
-            {
-                throw new InvalidOperationException("OpenAI API returned empty message content");
-            }
-
-            // Log usage statistics if available
-            if (chatResponse.Usage != null)
-            {
-                _logger.LogDebug("OpenAI Usage - Prompt: {PromptTokens}, Completion: {CompletionTokens}, Total: {TotalTokens}",
-                    chatResponse.Usage.PromptTokens, chatResponse.Usage.CompletionTokens, chatResponse.Usage.TotalTokens);
-            }
-
-            return message.Content;
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException($"OpenAI API request failed: {errorContent}");
         }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "HTTP error during OpenAI API call");
-            throw;
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "JSON serialization error during OpenAI API call");
-            throw new InvalidOperationException("Failed to process OpenAI API response", ex);
-        }
-        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
-        {
-            _logger.LogError(ex, "Timeout during OpenAI API call");
-            throw new TimeoutException("OpenAI API request timed out", ex);
-        }
+
+        var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+        var chatResponse = JsonSerializer.Deserialize<OpenAiChatResponse>(responseContent, _jsonOptions);
+        return chatResponse?.Choices?.FirstOrDefault()?.Message?.Content ?? string.Empty;
     }
 
     protected override async Task<bool> HealthCheckInternalAsync(CancellationToken cancellationToken)
     {
-        try
-        {
-            // Simple health check using a minimal request
-            var healthCheckPrompt = "Hello";
-            var response = await GenerateResponseInternalAsync(
-                healthCheckPrompt,
-                new LlmOptions { MaxTokens = 10, Temperature = 0.1 },
-                cancellationToken);
-
-            return !string.IsNullOrWhiteSpace(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "OpenAI health check failed");
-            return false;
-        }
+        var response = await GenerateResponseInternalAsync("Health check", new LlmOptions { MaxTokens = 5 }, cancellationToken);
+        return !string.IsNullOrWhiteSpace(response);
     }
 
     protected override Result ValidateConfiguration()
     {
         var options = _options.Value;
         var errors = options.Validate();
-
         return errors.Any()
             ? Result.Failure(LlmErrorCodes.Configuration, $"OpenAI configuration errors: {string.Join(", ", errors)}")
             : Result.Success();
@@ -210,157 +154,69 @@ public class OpenAiService : BaseLlmService
     private void ConfigureHttpClient()
     {
         var options = _options.Value;
-
-        // Set base address
-        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
-        {
-            _httpClient.BaseAddress = new Uri(options.BaseUrl);
-        }
-
-        // Set authentication header
-        if (!string.IsNullOrWhiteSpace(options.ApiKey))
-        {
-            _httpClient.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.ApiKey);
-        }
-
-        // Set organization header if provided
-        if (!string.IsNullOrWhiteSpace(options.OrganizationId))
-        {
-            _httpClient.DefaultRequestHeaders.Add("OpenAI-Organization", options.OrganizationId);
-        }
-
-        // Set project header if provided
-        if (!string.IsNullOrWhiteSpace(options.ProjectId))
-        {
-            _httpClient.DefaultRequestHeaders.Add("OpenAI-Project", options.ProjectId);
-        }
-
-        // Set user agent
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("DevMind/1.0");
-
-        // Set timeout
-        var timeoutSeconds = options.TimeoutSeconds ?? 30;
-        _httpClient.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        if (!string.IsNullOrWhiteSpace(options.BaseUrl)) _httpClient.BaseAddress = new Uri(options.BaseUrl);
+        if (!string.IsNullOrWhiteSpace(options.ApiKey)) _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiKey);
     }
 
     private OpenAiChatRequest CreateChatRequest(string prompt, LlmOptions options)
     {
-        var openAiOptions = _options.Value;
-
         return new OpenAiChatRequest
         {
-            Model = openAiOptions.Model,
-            Messages = new List<ExternalLlmMessage>
-            {
-                new ExternalLlmMessage
-                {
-                    Role = "user",
-                    Content = prompt
-                }
-            },
+            Model = _options.Value.Model,
+            Messages = new List<ExternalLlmMessage> { new() { Role = "user", Content = prompt } },
             MaxTokens = options.MaxTokens,
             Temperature = options.Temperature,
-            TopP = options.TopP,
-            FrequencyPenalty = openAiOptions.FrequencyPenalty,
-            PresencePenalty = openAiOptions.PresencePenalty,
-            Stop = options.StopSequences?.Length > 0 ? options.StopSequences : null,
-            NumberOfChoices = 1,
-            User = openAiOptions.UserId
+            TopP = options.TopP
         };
     }
 
     private string CreateIntentAnalysisPrompt(string userRequest)
     {
         return $@"Analyze the following user request and determine the most appropriate intent.
-
 User request: ""{userRequest}""
-
-Available intent types:
-- AnalyzeCode: Analyze code quality, structure, or issues
-- CreateBranch: Create a new git branch
-- RunTests: Execute test suites or test cases
-- GenerateDocumentation: Create or update documentation
-- RefactorCode: Improve code structure or design
-- FindBugs: Identify potential bugs or issues
-- OptimizePerformance: Improve code performance
-- SecurityScan: Analyze code for security vulnerabilities
-- Unknown: Cannot determine specific intent
-
+Available intent types: AnalyzeCode, CreateBranch, RunTests, GenerateDocumentation, RefactorCode, FindBugs, OptimizePerformance, SecurityScan, Unknown
 Respond with only the intent type and confidence level (High/Medium/Low) in this format:
 Intent: [IntentType]
 Confidence: [Level]";
     }
 
-    private string CreatePlanningPrompt(UserIntent intent, IEnumerable<DomainToolDefinition> availableTools)
+    private string CreateSummarizationPrompt(UserIntent intent, List<Result<ToolExecution>> history)
     {
-        var toolsList = string.Join("\n", availableTools.Select(t => $"- {t.Name}: {t.Description}"));
+        var historyLog = new StringBuilder();
+        foreach (var result in history)
+        {
+            historyLog.AppendLine(result.IsSuccess
+                ? $"- Tool `{result.Value.ToolCall.ToolName}` was called and succeeded."
+                : $"- A tool call failed with error: {result.Error.Message}");
+        }
 
-        return $@"Create an execution plan for the following user intent:
+        return $@"Based on the initial user request and the following execution history, create a concise, one-sentence summary for the agent's long-term memory.
+Focus on the final outcome or key finding.
 
-Intent: {intent.Type}
-Original request: ""{intent.OriginalRequest}""
+Initial Request: ""{intent.OriginalRequest}""
 
-Available tools:
-{toolsList}
+Execution History:
+{historyLog}
 
-Create a step-by-step execution plan using the available tools. For each step, specify:
-1. Tool name
-2. Parameters to pass to the tool
-
-Respond in this format:
-Step 1: [ToolName] with parameters: {{""param1"": ""value1"", ""param2"": ""value2""}}
-Step 2: [ToolName] with parameters: {{""param1"": ""value1""}}
-...";
+Concise Summary:";
     }
 
-    private string CreateSynthesisPrompt(UserIntent intent, ExecutionPlan plan, IEnumerable<ToolExecution> results)
-    {
-        var resultsText = string.Join("\n", results.Select((r, i) =>
-            $"Tool {i + 1} ({r.ToolCall.ToolName}): {r.GetResult<object>() ?? "No result"}"));
-
-        return $@"Synthesize a user-friendly response based on the following execution results:
-
-Original user request: ""{intent.OriginalRequest}""
-Intent: {intent.Type}
-
-Execution results:
-{resultsText}
-
-Create a comprehensive, helpful response that:
-1. Acknowledges what the user requested
-2. Summarizes what was accomplished
-3. Provides relevant details from the execution results
-4. Suggests next steps if appropriate
-
-Keep the tone professional but friendly.";
-    }
-
-    private (IntentType intentType, ConfidenceLevel confidence) ParseIntentResponse(string response)
+    private (IntentType, ConfidenceLevel) ParseIntentResponse(string response)
     {
         try
         {
             var lines = response.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-
             var intentLine = lines.FirstOrDefault(l => l.StartsWith("Intent:", StringComparison.OrdinalIgnoreCase));
             var confidenceLine = lines.FirstOrDefault(l => l.StartsWith("Confidence:", StringComparison.OrdinalIgnoreCase));
-
-            var intentText = intentLine?.Substring(7).Trim() ?? "Unknown";
-            var confidenceText = confidenceLine?.Substring(11).Trim() ?? "Medium";
-
-            var intentType = Enum.TryParse<IntentType>(intentText, true, out var parsedIntent)
-                ? parsedIntent
-                : IntentType.Unknown;
-
-            var confidence = Enum.TryParse<ConfidenceLevel>(confidenceText, true, out var parsedConfidence)
-                ? parsedConfidence
-                : ConfidenceLevel.Medium;
-
-            return (intentType, confidence);
+            var intentText = intentLine?.Substring("Intent:".Length).Trim() ?? "Unknown";
+            var confidenceText = confidenceLine?.Substring("Confidence:".Length).Trim() ?? "Medium";
+            Enum.TryParse<IntentType>(intentText, true, out var parsedIntent);
+            Enum.TryParse<ConfidenceLevel>(confidenceText, true, out var parsedConfidence);
+            return (parsedIntent, parsedConfidence);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to parse intent response, using defaults");
+            _logger.LogWarning(ex, "Failed to parse intent response, using defaults.");
             return (IntentType.Unknown, ConfidenceLevel.Low);
         }
     }
@@ -368,80 +224,50 @@ Keep the tone professional but friendly.";
     private List<ToolCall> ParsePlanningResponse(string response, Guid? sessionId)
     {
         var toolCalls = new List<ToolCall>();
-
         try
         {
-            var lines = response.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            var stepOrder = 0;
-
-            foreach (var line in lines)
+            if (response.Trim().StartsWith("{"))
             {
-                if (line.StartsWith("Step", StringComparison.OrdinalIgnoreCase))
-                {
-                    var toolCall = ParseStepLine(line, sessionId, stepOrder++);
-                    if (toolCall != null)
-                    {
-                        toolCalls.Add(toolCall);
-                    }
-                }
+                var toolCall = ParseToolCallJson(response, sessionId);
+                if (toolCall != null) toolCalls.Add(toolCall);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to parse planning response, returning empty plan");
+            _logger.LogWarning(ex, "Failed to parse planning response. Response was: {Response}", response);
         }
-
         return toolCalls;
     }
 
-    private ToolCall? ParseStepLine(string stepLine, Guid? sessionId, int order)
+    private ToolCall? ParseToolCallJson(string json, Guid? sessionId)
     {
         try
         {
-            // Extract tool name and parameters from step line
-            // Example: "Step 1: code_analyzer with parameters: {"code": "example", "language": "csharp"}"
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var parsed = JsonSerializer.Deserialize<JsonElement>(json);
 
-            var parts = stepLine.Split(new[] { " with parameters: " }, StringSplitOptions.None);
-            if (parts.Length != 2) return null;
+            // Flexibly get the tool name, preferring "name" but accepting "tool".
+            var nameElement = parsed.TryGetProperty("name", out var n) ? n
+                            : parsed.TryGetProperty("tool", out var t) ? t
+                            : default;
 
-            var toolPart = parts[0];
-            var paramsPart = parts[1];
+            // Flexibly get the arguments, preferring "arguments" but accepting "parameters".
+            var argsElement = parsed.TryGetProperty("arguments", out var a) ? a
+                            : parsed.TryGetProperty("parameters", out var p) ? p
+                            : default;
 
-            // Extract tool name (after the colon)
-            var colonIndex = toolPart.IndexOf(':');
-            if (colonIndex == -1) return null;
-
-            var toolName = toolPart.Substring(colonIndex + 1).Trim();
-
-            // Parse parameters JSON
-            var parameters = new Dictionary<string, object>();
-            if (!string.IsNullOrWhiteSpace(paramsPart) && paramsPart.Trim() != "{}")
+            if (nameElement.ValueKind != JsonValueKind.Undefined && argsElement.ValueKind != JsonValueKind.Undefined)
             {
-                try
-                {
-                    var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(paramsPart, _jsonOptions);
-                    if (parsed != null)
-                    {
-                        foreach (var kvp in parsed)
-                        {
-                            parameters[kvp.Key] = kvp.Value.GetString() ?? kvp.Value.ToString();
-                        }
-                    }
-                }
-                catch (JsonException)
-                {
-                    _logger.LogWarning("Failed to parse parameters JSON: {Params}", paramsPart);
-                }
+                var toolName = nameElement.GetString()!;
+                var parameters = JsonSerializer.Deserialize<Dictionary<string, object>>(argsElement.GetRawText(), options)!;
+                return ToolCall.Create(toolName, parameters, sessionId);
             }
-
-            return ToolCall.Create(toolName, parameters, sessionId, order);
         }
-        catch (Exception ex)
+        catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "Failed to parse step line: {StepLine}", stepLine);
-            return null;
+            _logger.LogWarning(ex, "Could not parse response as a direct tool call JSON object.");
         }
+        return null;
     }
-
     #endregion
 }
