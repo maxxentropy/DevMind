@@ -124,7 +124,8 @@ public class OpenAiService : BaseLlmService
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new HttpRequestException($"OpenAI API request failed: {errorContent}");
+            // Include the status code in the exception
+            throw new HttpRequestException($"OpenAI API request failed: {errorContent}", null, response.StatusCode);
         }
 
         var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);

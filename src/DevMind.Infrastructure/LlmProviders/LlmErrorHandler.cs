@@ -220,61 +220,66 @@ public class LlmErrorHandler
 
     private LlmErrorHandlingResult HandleHttpError(HttpRequestException exception, string provider, string operation)
     {
-        var statusCode = ExtractStatusCode(exception);
+        // Use the status code directly from the exception
+        var statusCode = exception.StatusCode;
 
-        return statusCode switch
+        switch (statusCode)
         {
-            HttpStatusCode.Unauthorized => new LlmErrorHandlingResult
-            {
-                ErrorCode = LlmErrorCodes.Authentication,
-                ErrorType = LlmErrorType.Authentication,
-                IsRetryable = false,
-                RecommendedAction = "Check API key configuration",
-                UserMessage = "Authentication failed. Please verify your API credentials.",
-                ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
-            },
-            HttpStatusCode.TooManyRequests => new LlmErrorHandlingResult
-            {
-                ErrorCode = LlmErrorCodes.RateLimit,
-                ErrorType = LlmErrorType.RateLimit,
-                IsRetryable = true,
-                RecommendedAction = "Implement exponential backoff",
-                UserMessage = "Rate limit exceeded. The request will be retried automatically.",
-                ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
-            },
-            HttpStatusCode.BadRequest => new LlmErrorHandlingResult
-            {
-                ErrorCode = LlmErrorCodes.InvalidRequest,
-                ErrorType = LlmErrorType.InvalidRequest,
-                IsRetryable = false,
-                RecommendedAction = "Review request parameters",
-                UserMessage = "Invalid request format. Please check your input.",
-                ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
-            },
-            HttpStatusCode.InternalServerError or
-            HttpStatusCode.BadGateway or
-            HttpStatusCode.ServiceUnavailable or
-            HttpStatusCode.GatewayTimeout => new LlmErrorHandlingResult
-            {
-                ErrorCode = LlmErrorCodes.ServiceUnavailable,
-                ErrorType = LlmErrorType.ServiceUnavailable,
-                IsRetryable = true,
-                RecommendedAction = "Retry with backoff",
-                UserMessage = "Service temporarily unavailable. Retrying automatically.",
-                ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
-            },
-            _ => new LlmErrorHandlingResult
-            {
-                ErrorCode = LlmErrorCodes.Unknown,
-                ErrorType = LlmErrorType.Unknown,
-                IsRetryable = false,
-                RecommendedAction = "Log for investigation",
-                UserMessage = "An unexpected error occurred. Please try again later.",
-                ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
-            }
-        };
+            case HttpStatusCode.Unauthorized:
+                return new LlmErrorHandlingResult
+                {
+                    ErrorCode = LlmErrorCodes.Authentication,
+                    ErrorType = LlmErrorType.Authentication,
+                    IsRetryable = false,
+                    RecommendedAction = "Check API key configuration",
+                    UserMessage = "Authentication failed. Please verify your API credentials.",
+                    ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
+                };
+            case HttpStatusCode.TooManyRequests:
+                return new LlmErrorHandlingResult
+                {
+                    ErrorCode = LlmErrorCodes.RateLimit,
+                    ErrorType = LlmErrorType.RateLimit,
+                    IsRetryable = true,
+                    RecommendedAction = "Implement exponential backoff",
+                    UserMessage = "The API rate limit has been exceeded. The request will be retried automatically.",
+                    ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
+                };
+            case HttpStatusCode.BadRequest:
+                return new LlmErrorHandlingResult
+                {
+                    ErrorCode = LlmErrorCodes.InvalidRequest,
+                    ErrorType = LlmErrorType.InvalidRequest,
+                    IsRetryable = false,
+                    RecommendedAction = "Review request parameters",
+                    UserMessage = "Invalid request format. Please check your input.",
+                    ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
+                };
+            case HttpStatusCode.InternalServerError:
+            case HttpStatusCode.BadGateway:
+            case HttpStatusCode.ServiceUnavailable:
+            case HttpStatusCode.GatewayTimeout:
+                return new LlmErrorHandlingResult
+                {
+                    ErrorCode = LlmErrorCodes.ServiceUnavailable,
+                    ErrorType = LlmErrorType.ServiceUnavailable,
+                    IsRetryable = true,
+                    RecommendedAction = "Retry with backoff",
+                    UserMessage = "The remote service is temporarily unavailable. Retrying automatically.",
+                    ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
+                };
+            default:
+                return new LlmErrorHandlingResult
+                {
+                    ErrorCode = LlmErrorCodes.Unknown,
+                    ErrorType = LlmErrorType.Unknown,
+                    IsRetryable = false,
+                    RecommendedAction = "Log for investigation",
+                    UserMessage = $"An unexpected HTTP error occurred: {statusCode}",
+                    ProviderSpecificData = new { StatusCode = statusCode, Provider = provider }
+                };
+        }
     }
-
     private LlmErrorHandlingResult HandleTimeoutError(TimeoutException exception, string provider, string operation)
     {
         return new LlmErrorHandlingResult

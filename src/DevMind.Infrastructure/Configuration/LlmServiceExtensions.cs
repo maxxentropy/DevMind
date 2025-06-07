@@ -1,9 +1,5 @@
-// src/DevMind.Infrastructure/Configuration/LlmServiceExtensions.cs
-
 using DevMind.Core.Application.Interfaces;
 using DevMind.Core.Application.Services;
-using DevMind.Core.Domain.Entities;
-using DevMind.Core.Domain.ValueObjects;
 using DevMind.Infrastructure.Extensions;
 using DevMind.Infrastructure.LlmProviders;
 using Microsoft.Extensions.Configuration;
@@ -374,10 +370,15 @@ public static class LlmServiceExtensions
     {
         return HttpPolicyExtensions
             .HandleTransientHttpError()
+            // Explicitly handle the rate-limiting status code
+            .OrResult(msg => msg.StatusCode == HttpStatusCode.TooManyRequests)
             .Or<TimeoutRejectedException>()
             .WaitAndRetryAsync(
                 retryCount: 3,
-                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                // Use exponential backoff + jitter to avoid thundering herd
+                sleepDurationProvider: retryAttempt =>
+                    TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))   // 2s, 4s, 8s
+                    + TimeSpan.FromMilliseconds(new Random().Next(0, 1000)), // add random jitter
                 onRetry: (outcome, timespan, retryCount, context) =>
                 {
                     var logger = context.GetLogger();
@@ -388,7 +389,7 @@ public static class LlmServiceExtensions
                     }
                     else
                     {
-                        logger?.LogWarning("Retry {RetryCount} for LLM request after {Delay}ms due to {StatusCode}",
+                        logger?.LogWarning("Retry {RetryCount} for LLM request after {Delay}ms due to status code {StatusCode}",
                             retryCount, timespan.TotalMilliseconds, outcome.Result?.StatusCode);
                     }
                 });

@@ -32,9 +32,8 @@ public static class CliServiceExtensions
         // Register options classes to be read from appsettings.json
         services.Configure<AgentOptions>(configuration.GetSection("Agent"));
 
-        // Register the new world-class services as singletons or scoped services.
         // PromptService and GuardrailService are stateless and can be scoped.
-        services.AddScoped<IPromptService, PromptService>();
+        services.AddSingleton<IPromptService, PromptService>();
         services.AddScoped<IGuardrailService, GuardrailService>();
 
         // The In-Memory LTM must be a singleton to persist memory across commands during a single run.
